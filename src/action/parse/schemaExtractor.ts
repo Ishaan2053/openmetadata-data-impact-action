@@ -65,6 +65,7 @@ function pushTableAndColumns(
     rawReference: tableName,
     table: tableName,
     schema,
+    confidence: "high",
   });
 
   for (const column of columns ?? []) {
@@ -79,6 +80,7 @@ function pushTableAndColumns(
       table: tableName,
       schema,
       column: column.name,
+      confidence: "medium",
     });
   }
 }
@@ -124,6 +126,7 @@ export function extractSchemaEntities(file: ChangedFile): ParsedEntity[] {
         sourceFile: file.path,
         rawReference: name,
         table: name,
+        confidence: "low",
       });
     }
   }

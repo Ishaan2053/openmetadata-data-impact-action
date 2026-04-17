@@ -5,6 +5,11 @@ import { extractDbtEntities } from "./dbtExtractor";
 import { extractSchemaEntities } from "./schemaExtractor";
 import { normalizeEntities } from "./normalize";
 
+interface ParseOptions {
+  strictSqlParse: boolean;
+  maxEntities: number;
+}
+
 function isSchemaLike(path: string): boolean {
   const lower = path.toLowerCase();
   return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
@@ -18,6 +23,21 @@ function isDbtLike(path: string): boolean {
 export function extractEntitiesFromFiles(files: ChangedFile[]): {
   entities: ReturnType<typeof normalizeEntities>;
   warnings: string[];
+  truncated: boolean;
+  lowConfidenceEntityCount: number;
+} {
+  const options: ParseOptions = {
+    strictSqlParse: false,
+    maxEntities: Number.MAX_SAFE_INTEGER,
+  };
+  return extractEntitiesFromFilesWithOptions(files, options);
+}
+
+export function extractEntitiesFromFilesWithOptions(files: ChangedFile[], options: ParseOptions): {
+  entities: ReturnType<typeof normalizeEntities>;
+  warnings: string[];
+  truncated: boolean;
+  lowConfidenceEntityCount: number;
 } {
   const parsed: ParsedEntity[] = [];
   const warnings: string[] = [];
@@ -26,7 +46,7 @@ export function extractEntitiesFromFiles(files: ChangedFile[]): {
     try {
       const lower = file.path.toLowerCase();
       if (lower.endsWith(".sql")) {
-        parsed.push(...extractSqlEntities(file));
+        parsed.push(...extractSqlEntities(file, { strictMode: options.strictSqlParse }));
       }
 
       if (isDbtLike(file.path)) {
@@ -43,8 +63,24 @@ export function extractEntitiesFromFiles(files: ChangedFile[]): {
     }
   }
 
+  let truncated = false;
+  let normalized = normalizeEntities(parsed);
+  if (normalized.length > options.maxEntities) {
+    truncated = true;
+    warnings.push(
+      `Entity extraction truncated at ${options.maxEntities} entities out of ${normalized.length}.`,
+    );
+    normalized = normalized.slice(0, options.maxEntities);
+  }
+
+  const lowConfidenceEntityCount = normalized.filter(
+    (entity) => entity.confidence === "low",
+  ).length;
+
   return {
-    entities: normalizeEntities(parsed),
+    entities: normalized,
     warnings,
+    truncated,
+    lowConfidenceEntityCount,
   };
 }

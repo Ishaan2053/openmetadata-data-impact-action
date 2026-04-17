@@ -21,6 +21,7 @@ function buildModelEntity(filePath: string): ParsedEntity | undefined {
     sourceFile: filePath,
     rawReference: `model:${modelName}`,
     table: modelName,
+    confidence: "high",
   };
 }
 
@@ -77,6 +78,7 @@ export function extractDbtEntities(file: ChangedFile): ParsedEntity[] {
       sourceFile: file.path,
       rawReference: `ref(${modelName})`,
       table: modelName,
+      confidence: "high",
     });
   }
 
@@ -99,6 +101,7 @@ export function extractDbtEntities(file: ChangedFile): ParsedEntity[] {
       rawReference: `source(${sourceName},${tableName})`,
       schema: sourceName,
       table: tableName,
+      confidence: "medium",
     });
   }
 

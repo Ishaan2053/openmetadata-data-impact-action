@@ -1,12 +1,17 @@
 import { CanonicalEntity, ParsedEntity } from "../types";
 
+const CONFIDENCE_SCORE = {
+  high: 3,
+  medium: 2,
+  low: 1,
+} as const;
+
 function cleanIdentifier(raw: string): string {
   return raw.replace(/[`,"\[\]]/g, "").trim().toLowerCase();
 }
 
 export function normalizeEntities(entities: ParsedEntity[]): CanonicalEntity[] {
-  const normalized: CanonicalEntity[] = [];
-  const dedupe = new Set<string>();
+  const normalized = new Map<string, CanonicalEntity>();
 
   for (const entity of entities) {
     const parts = entity.table
@@ -37,12 +42,7 @@ export function normalizeEntities(entities: ParsedEntity[]): CanonicalEntity[] {
     const fqn = [database, schema, table, column].filter(Boolean).join(".");
     const dedupeKey = `${entity.sourceKind}:${fqn}:${entity.sourceFile}`;
 
-    if (dedupe.has(dedupeKey)) {
-      continue;
-    }
-    dedupe.add(dedupeKey);
-
-    normalized.push({
+    const candidate: CanonicalEntity = {
       sourceKind: entity.sourceKind,
       sourceFile: entity.sourceFile,
       fqn,
@@ -51,8 +51,19 @@ export function normalizeEntities(entities: ParsedEntity[]): CanonicalEntity[] {
       schema,
       table,
       column,
-    });
+      confidence: entity.confidence,
+    };
+
+    const existing = normalized.get(dedupeKey);
+    if (!existing) {
+      normalized.set(dedupeKey, candidate);
+      continue;
+    }
+
+    if (CONFIDENCE_SCORE[candidate.confidence] > CONFIDENCE_SCORE[existing.confidence]) {
+      normalized.set(dedupeKey, candidate);
+    }
   }
 
-  return normalized;
+  return [...normalized.values()];
 }

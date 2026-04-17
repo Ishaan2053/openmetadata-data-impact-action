@@ -1,5 +1,9 @@
 import { ChangedFile, ParsedEntity } from "../types";
 
+interface SqlExtractorOptions {
+  strictMode: boolean;
+}
+
 const SQL_TABLE_PATTERN =
   /\b(?:from|join|into|update|table|view|merge\s+into|delete\s+from|truncate\s+table)\s+([`"\[\]a-zA-Z0-9_.-]+)/gi;
 const SQL_COLUMN_PATTERN = /\b([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_.-]*)\.([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_-]*)\b/g;
@@ -52,7 +56,7 @@ function splitTableParts(tableRef: string): {
   };
 }
 
-export function extractSqlEntities(file: ChangedFile): ParsedEntity[] {
+export function extractSqlEntities(file: ChangedFile, options: SqlExtractorOptions): ParsedEntity[] {
   if (!file.path.toLowerCase().endsWith(".sql")) {
     return [];
   }
@@ -88,7 +92,12 @@ export function extractSqlEntities(file: ChangedFile): ParsedEntity[] {
       table: tableParts.table,
       schema: tableParts.schema,
       database: tableParts.database,
+      confidence: "high",
     });
+  }
+
+  if (options.strictMode) {
+    return entities;
   }
 
   for (const match of searchText.matchAll(SQL_COLUMN_PATTERN)) {
@@ -118,6 +127,7 @@ export function extractSqlEntities(file: ChangedFile): ParsedEntity[] {
       schema: tableParts.schema,
       database: tableParts.database,
       column: cleanedColumn,
+      confidence: "low",
     });
   }
 
