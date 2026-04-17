@@ -6,16 +6,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:action": "npm run build",
+    "bundle:action": "npm run build && ncc build dist/action/index.js -o bundle",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build"
+    "test": "npm run build && node --test test/**/*.test.js",
+    "check": "npm run typecheck && npm run test && npm run bundle:action"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "private": true,
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.1",
@@ -23,6 +28,7 @@
     "minimatch": "^10.1.1"
   },
   "devDependencies": {
+    "@vercel/ncc": "^0.38.4",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3"
