@@ -14,6 +14,41 @@ function decodeBase64Content(raw: string): string {
   return Buffer.from(raw, "base64").toString("utf8");
 }
 
+function truncateSnippet(value: string, maxLength: number = 90): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength - 3)}...`;
+}
+
+function extractPatchLines(patch: string): { added: string[]; removed: string[] } {
+  const added: string[] = [];
+  const removed: string[] = [];
+
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      const normalized = line.slice(1).trim();
+      if (normalized.length > 0) {
+        added.push(normalized);
+      }
+    }
+
+    if (line.startsWith("-")) {
+      const normalized = line.slice(1).trim();
+      if (normalized.length > 0) {
+        removed.push(normalized);
+      }
+    }
+  }
+
+  return { added, removed };
+}
+
 export class DiffReader {
   private readonly octokit;
 
@@ -65,6 +100,44 @@ export class DiffReader {
     );
 
     return matched;
+  }
+
+  deriveWhatChanged(files: ChangedFile[], maxItems: number = 8): string[] {
+    const summaries: string[] = [];
+
+    for (const file of files) {
+      if (summaries.length >= maxItems) {
+        break;
+      }
+
+      const patch = file.patch;
+      if (!patch) {
+        summaries.push(`${file.path}: modified (${file.status}), patch details unavailable.`);
+        continue;
+      }
+
+      const { added, removed } = extractPatchLines(patch);
+      const plus = added.length;
+      const minus = removed.length;
+
+      let detail = `${file.path}: +${plus}/-${minus}`;
+      const firstAdded = added[0];
+      if (firstAdded) {
+        detail += `; add "${truncateSnippet(firstAdded)}"`;
+      }
+      const firstRemoved = removed[0];
+      if (firstRemoved) {
+        detail += `; remove "${truncateSnippet(firstRemoved)}"`;
+      }
+
+      summaries.push(detail);
+    }
+
+    if (files.length > summaries.length) {
+      summaries.push(`... and ${files.length - summaries.length} additional tracked file changes.`);
+    }
+
+    return summaries;
   }
 
   async hydrateTrackedFiles(diff: DiffContext, files: ChangedFile[]): Promise<ChangedFile[]> {
