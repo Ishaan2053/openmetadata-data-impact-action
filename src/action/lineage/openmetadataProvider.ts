@@ -1,0 +1,262 @@
+import { ActionConfig, AssetType, CanonicalEntity, LineageNode, LineageResult } from "../types";
+import { logDebug, logWarning } from "../logging";
+import { LineageProvider } from "./provider";
+
+interface RequestResult {
+  ok: boolean;
+  status: number;
+  bodyText: string;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeType(value: string | undefined): AssetType {
+  const lower = (value ?? "").toLowerCase();
+  if (lower.includes("dashboard")) {
+    return "dashboard";
+  }
+  if (lower.includes("pipeline")) {
+    return "pipeline";
+  }
+  if (lower.includes("report")) {
+    return "report";
+  }
+  if (lower.includes("view")) {
+    return "view";
+  }
+  if (lower.includes("table")) {
+    return "table";
+  }
+  if (lower.includes("topic")) {
+    return "topic";
+  }
+  return "other";
+}
+
+function readNode(input: unknown): LineageNode | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const item = input as Record<string, unknown>;
+  const idRaw = item.id ?? item.entityId ?? item.fullyQualifiedName ?? item.fqn ?? item.name;
+  const fqnRaw = item.fullyQualifiedName ?? item.fqn ?? item.name;
+  const nameRaw = item.displayName ?? item.name ?? fqnRaw;
+
+  if (typeof idRaw !== "string" || typeof fqnRaw !== "string" || typeof nameRaw !== "string") {
+    return undefined;
+  }
+
+  const typeRaw = item.type ?? item.entityType;
+  const urlRaw = item.href ?? item.url;
+
+  return {
+    id: idRaw,
+    fqn: fqnRaw,
+    name: nameRaw,
+    type: normalizeType(typeof typeRaw === "string" ? typeRaw : undefined),
+    url: typeof urlRaw === "string" ? urlRaw : undefined,
+  };
+}
+
+function parseJsonSafely(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildFqnCandidates(entity: CanonicalEntity): string[] {
+  const candidates = new Set<string>();
+  candidates.add(entity.fqn);
+  candidates.add([entity.database, entity.schema, entity.table].filter(Boolean).join("."));
+  candidates.add([entity.schema, entity.table].filter(Boolean).join("."));
+  candidates.add(entity.table);
+  return [...candidates].filter((candidate) => candidate.length > 0);
+}
+
+function buildLineageEndpoints(base: string, fqn: string, depth: number): string[] {
+  const encoded = encodeURIComponent(fqn);
+  return [
+    `${base}/api/v1/lineage/table/name/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
+    `${base}/api/v1/lineage/table/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
+    `${base}/api/v1/lineage?fqn=${encoded}&entityType=table&upstreamDepth=0&downstreamDepth=${depth}`,
+  ];
+}
+
+function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
+  nodes: LineageNode[];
+  partial: boolean;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const nodes: LineageNode[] = [];
+
+  if (!payload || typeof payload !== "object") {
+    return {
+      nodes,
+      partial: true,
+      warnings: ["Lineage API returned an empty payload."],
+    };
+  }
+
+  const data = payload as Record<string, unknown>;
+  const nodeMap = new Map<string, LineageNode>();
+
+  if (Array.isArray(data.nodes)) {
+    for (const item of data.nodes) {
+      const node = readNode(item);
+      if (node) {
+        nodeMap.set(node.id, node);
+      }
+    }
+  }
+
+  if (Array.isArray(data.downstreamEdges)) {
+    for (const edge of data.downstreamEdges) {
+      if (!edge || typeof edge !== "object") {
+        continue;
+      }
+
+      const edgeObj = edge as Record<string, unknown>;
+      const toEntity = edgeObj.toEntity;
+      const parsedTo = readNode(toEntity);
+      if (parsedTo) {
+        parsedTo.upstreamFrom = sourceEntityFqn;
+        nodes.push(parsedTo);
+        continue;
+      }
+
+      if (typeof toEntity === "string") {
+        const fromMap = nodeMap.get(toEntity);
+        if (fromMap) {
+          nodes.push({ ...fromMap, upstreamFrom: sourceEntityFqn });
+        }
+      }
+    }
+  }
+
+  if (Array.isArray((data as { downstreamNodes?: unknown[] }).downstreamNodes)) {
+    for (const item of (data as { downstreamNodes?: unknown[] }).downstreamNodes ?? []) {
+      const parsed = readNode(item);
+      if (parsed) {
+        parsed.upstreamFrom = sourceEntityFqn;
+        nodes.push(parsed);
+      }
+    }
+  }
+
+  const unique = new Map<string, LineageNode>();
+  for (const node of nodes) {
+    unique.set(node.fqn, node);
+  }
+
+  return {
+    nodes: [...unique.values()],
+    partial: warnings.length > 0,
+    warnings,
+  };
+}
+
+export class OpenMetadataLineageProvider implements LineageProvider {
+  readonly name = "openmetadata-api";
+
+  constructor(private readonly config: ActionConfig) {}
+
+  async getDownstream(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
+    const warnings: string[] = [];
+    const candidates = buildFqnCandidates(entity);
+
+    for (const candidate of candidates) {
+      const endpoints = buildLineageEndpoints(this.config.openMetadataEndpoint, candidate, depth);
+
+      for (const endpoint of endpoints) {
+        const response = await this.requestWithRetry(endpoint);
+        if (response.status === 404) {
+          logDebug(`Entity not found for candidate ${candidate} via ${endpoint}.`);
+          continue;
+        }
+
+        if (!response.ok) {
+          const warning = `Lineage request failed (${response.status}) for ${candidate}.`;
+          warnings.push(warning);
+          logWarning(warning);
+          continue;
+        }
+
+        const payload = parseJsonSafely(response.bodyText);
+        const parsed = parseLineagePayload(payload, entity.fqn);
+        return {
+          sourceEntityFqn: entity.fqn,
+          nodes: parsed.nodes,
+          partial: parsed.partial,
+          warnings: [...warnings, ...parsed.warnings],
+        };
+      }
+    }
+
+    return {
+      sourceEntityFqn: entity.fqn,
+      nodes: [],
+      partial: true,
+      warnings: [...warnings, `Missing metadata for ${entity.fqn}.`],
+    };
+  }
+
+  private async requestWithRetry(url: string): Promise<RequestResult> {
+    let attempt = 0;
+    let backoff = 300;
+
+    while (attempt <= this.config.maxRetries) {
+      attempt += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${this.config.authToken}`,
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        const bodyText = await response.text();
+        if (response.status >= 500 && attempt <= this.config.maxRetries) {
+          await delay(backoff);
+          backoff *= 2;
+          continue;
+        }
+
+        return {
+          ok: response.ok,
+          status: response.status,
+          bodyText,
+        };
+      } catch (error) {
+        if (attempt > this.config.maxRetries) {
+          return {
+            ok: false,
+            status: 599,
+            bodyText: String(error),
+          };
+        }
+
+        await delay(backoff);
+        backoff *= 2;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    return {
+      ok: false,
+      status: 599,
+      bodyText: "Lineage request exhausted retries.",
+    };
+  }
+}
