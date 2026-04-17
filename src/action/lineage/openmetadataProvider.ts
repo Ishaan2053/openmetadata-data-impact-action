@@ -111,6 +111,7 @@ function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
       const node = readNode(item);
       if (node) {
         nodeMap.set(node.id, node);
+        nodeMap.set(node.fqn, node);
       }
     }
   }
