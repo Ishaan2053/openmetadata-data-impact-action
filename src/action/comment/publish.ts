@@ -13,6 +13,14 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
   const octokit = github.getOctokit(githubToken);
   const { context } = github;
 
+  let authenticatedLogin: string | undefined;
+  try {
+    const auth = await octokit.rest.users.getAuthenticated();
+    authenticatedLogin = auth.data.login;
+  } catch {
+    // Continue without strict ownership check if auth identity cannot be resolved.
+  }
+
   const comments = await octokit.paginate(octokit.rest.issues.listComments, {
     owner: context.repo.owner,
     repo: context.repo.repo,
@@ -21,7 +29,17 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
   });
 
   const formattedBody = withMarker(body);
-  const existing = comments.find((comment) => comment.body?.includes(MARKER));
+  const existing = comments.find((comment) => {
+    if (!comment.body?.includes(MARKER)) {
+      return false;
+    }
+
+    if (authenticatedLogin) {
+      return comment.user?.login === authenticatedLogin;
+    }
+
+    return comment.user?.type === "Bot";
+  });
 
   if (existing) {
     await octokit.rest.issues.updateComment({
