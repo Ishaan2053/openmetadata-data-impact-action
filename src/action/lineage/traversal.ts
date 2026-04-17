@@ -5,6 +5,14 @@ import { LineageProvider } from "./provider";
 export interface TraversalResult {
   lineageResults: LineageResult[];
   warnings: string[];
+  truncated: boolean;
+  traversedNodeCount: number;
+  effectiveMaxConcurrency: number;
+}
+
+interface TraversalOptions {
+  maxConcurrency: number;
+  maxDownstreamAssets: number;
 }
 
 function entityFromFqn(fqn: string): CanonicalEntity {
@@ -21,6 +29,7 @@ function entityFromFqn(fqn: string): CanonicalEntity {
     table,
     schema,
     database,
+    confidence: "medium",
   };
 }
 
@@ -28,52 +37,87 @@ export async function traverseDownstream(
   provider: LineageProvider,
   seedEntities: CanonicalEntity[],
   maxDepth: number,
+  options: TraversalOptions,
 ): Promise<TraversalResult> {
   const warnings: string[] = [];
   const lineageResults: LineageResult[] = [];
   const visited = new Set<string>();
-  const queue: Array<{ entity: CanonicalEntity; depth: number }> = seedEntities.map((entity) => ({
-    entity,
-    depth: 0,
-  }));
-  let index = 0;
+  const discoveredDownstream = new Set<string>();
+  let truncated = false;
+  let currentLevel = seedEntities.filter((entity) => {
+    if (visited.has(entity.fqn)) {
+      return false;
+    }
+    visited.add(entity.fqn);
+    return true;
+  });
 
-  while (index < queue.length) {
-    const current = queue[index];
-    index += 1;
+  let depth = 0;
+  let dynamicConcurrency = Math.max(1, options.maxConcurrency);
 
-    if (!current) {
-      continue;
+  while (depth < maxDepth && currentLevel.length > 0 && !truncated) {
+    const batchSize = Math.max(1, dynamicConcurrency);
+    const levelResults: LineageResult[] = [];
+
+    for (let i = 0; i < currentLevel.length; i += batchSize) {
+      const chunk = currentLevel.slice(i, i + batchSize);
+      const chunkResults = await Promise.all(
+        chunk.map(async (entity) => {
+          logDebug(`Traversing lineage from ${entity.fqn} at depth ${depth + 1}.`);
+          return provider.getDownstream(entity, 1);
+        }),
+      );
+      levelResults.push(...chunkResults);
     }
 
-    if (current.depth >= maxDepth) {
-      continue;
-    }
+    const nextLevelMap = new Map<string, CanonicalEntity>();
 
-    if (visited.has(current.entity.fqn)) {
-      continue;
-    }
-    visited.add(current.entity.fqn);
+    for (const result of levelResults) {
+      lineageResults.push(result);
+      warnings.push(...result.warnings);
 
-    logDebug(`Traversing lineage from ${current.entity.fqn} at depth ${current.depth + 1}.`);
-    const result = await provider.getDownstream(current.entity, 1);
-    lineageResults.push(result);
-    warnings.push(...result.warnings);
+      for (const node of result.nodes) {
+        if (!discoveredDownstream.has(node.fqn)) {
+          discoveredDownstream.add(node.fqn);
+          if (discoveredDownstream.size > options.maxDownstreamAssets) {
+            truncated = true;
+            warnings.push(
+              `Downstream traversal truncated at ${options.maxDownstreamAssets} assets. Increase max-downstream-assets for full graph coverage.`,
+            );
+            break;
+          }
+        }
 
-    for (const node of result.nodes) {
-      if (visited.has(node.fqn)) {
-        continue;
+        if (!visited.has(node.fqn)) {
+          visited.add(node.fqn);
+          nextLevelMap.set(node.fqn, entityFromFqn(node.fqn));
+        }
       }
 
-      queue.push({
-        entity: entityFromFqn(node.fqn),
-        depth: current.depth + 1,
-      });
+      if (truncated) {
+        break;
+      }
     }
+
+    const sawRateLimit = levelResults.some((result) =>
+      result.warnings.some((warning) => warning.includes("(429)") || warning.toLowerCase().includes("rate")),
+    );
+
+    if (sawRateLimit) {
+      dynamicConcurrency = Math.max(1, Math.floor(dynamicConcurrency / 2));
+    } else if (dynamicConcurrency < options.maxConcurrency) {
+      dynamicConcurrency += 1;
+    }
+
+    currentLevel = [...nextLevelMap.values()];
+    depth += 1;
   }
 
   return {
     lineageResults,
     warnings,
+    truncated,
+    traversedNodeCount: discoveredDownstream.size,
+    effectiveMaxConcurrency: dynamicConcurrency,
   };
 }

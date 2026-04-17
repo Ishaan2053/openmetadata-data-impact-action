@@ -6,10 +6,35 @@ interface RequestResult {
   ok: boolean;
   status: number;
   bodyText: string;
+  headers?: Headers;
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitterMs(base: number): number {
+  const jitter = Math.floor(Math.random() * 250);
+  return base + jitter;
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const asSeconds = Number.parseInt(value, 10);
+  if (!Number.isNaN(asSeconds) && asSeconds >= 0) {
+    return asSeconds * 1000;
+  }
+
+  const asDate = Date.parse(value);
+  if (Number.isNaN(asDate)) {
+    return undefined;
+  }
+
+  const diff = asDate - Date.now();
+  return diff > 0 ? diff : undefined;
 }
 
 function normalizeType(value: string | undefined): AssetType {
@@ -51,6 +76,28 @@ function readNode(input: unknown): LineageNode | undefined {
 
   const typeRaw = item.type ?? item.entityType;
   const urlRaw = item.href ?? item.url;
+  const tagsRaw = item.tags;
+
+  const tags: string[] = [];
+  if (Array.isArray(tagsRaw)) {
+    for (const tag of tagsRaw) {
+      if (typeof tag === "string") {
+        tags.push(tag.toLowerCase());
+        continue;
+      }
+
+      if (tag && typeof tag === "object") {
+        const tagObj = tag as Record<string, unknown>;
+        const candidate =
+          (typeof tagObj.tagFQN === "string" && tagObj.tagFQN) ||
+          (typeof tagObj.fullyQualifiedName === "string" && tagObj.fullyQualifiedName) ||
+          (typeof tagObj.name === "string" && tagObj.name);
+        if (candidate) {
+          tags.push(candidate.toLowerCase());
+        }
+      }
+    }
+  }
 
   return {
     id: idRaw,
@@ -58,6 +105,7 @@ function readNode(input: unknown): LineageNode | undefined {
     name: nameRaw,
     type: normalizeType(typeof typeRaw === "string" ? typeRaw : undefined),
     url: typeof urlRaw === "string" ? urlRaw : undefined,
+    tags: tags.length > 0 ? [...new Set(tags)] : undefined,
   };
 }
 
@@ -164,10 +212,29 @@ function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
 
 export class OpenMetadataLineageProvider implements LineageProvider {
   readonly name = "openmetadata-api";
+  private readonly cache = new Map<string, Promise<LineageResult>>();
 
   constructor(private readonly config: ActionConfig) {}
 
   async getDownstream(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
+    const cacheKey = `${entity.fqn}|${depth}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const promise = this.getDownstreamUncached(entity, depth);
+    this.cache.set(cacheKey, promise);
+
+    try {
+      return await promise;
+    } catch (error) {
+      this.cache.delete(cacheKey);
+      throw error;
+    }
+  }
+
+  private async getDownstreamUncached(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
     const warnings: string[] = [];
     const candidates = buildFqnCandidates(entity);
 
@@ -227,8 +294,12 @@ export class OpenMetadataLineageProvider implements LineageProvider {
         });
 
         const bodyText = await response.text();
-        if (response.status >= 500 && attempt <= this.config.maxRetries) {
-          await delay(backoff);
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+        const shouldRetry = (response.status === 429 || response.status >= 500) && attempt <= this.config.maxRetries;
+
+        if (shouldRetry) {
+          const waitMs = jitterMs(retryAfterMs ?? backoff);
+          await delay(waitMs);
           backoff *= 2;
           continue;
         }
@@ -237,6 +308,7 @@ export class OpenMetadataLineageProvider implements LineageProvider {
           ok: response.ok,
           status: response.status,
           bodyText,
+          headers: response.headers,
         };
       } catch (error) {
         if (attempt > this.config.maxRetries) {
@@ -247,7 +319,7 @@ export class OpenMetadataLineageProvider implements LineageProvider {
           };
         }
 
-        await delay(backoff);
+        await delay(jitterMs(backoff));
         backoff *= 2;
       } finally {
         clearTimeout(timer);

@@ -8,6 +8,7 @@ interface McpResponse {
     name?: string;
     type?: string;
     url?: string;
+    tags?: string[];
   }>;
   warnings?: string[];
   partial?: boolean;
@@ -101,6 +102,10 @@ export class McpLineageProvider implements LineageProvider {
 
         if (node.url) {
           mapped.url = node.url;
+        }
+
+        if (Array.isArray(node.tags) && node.tags.length > 0) {
+          mapped.tags = node.tags.map((tag) => tag.toLowerCase());
         }
 
         nodes.push(mapped);
