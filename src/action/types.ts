@@ -1,4 +1,5 @@
 export type SourceKind = "sql" | "dbt" | "schema";
+export type EntityConfidence = "high" | "medium" | "low";
 
 export type AssetType =
   | "dashboard"
@@ -21,11 +22,19 @@ export interface ActionConfig {
   lineageProvider: LineageProviderMode;
   mcpEndpoint?: string | undefined;
   maxLineageDepth: number;
+  maxConcurrency: number;
+  maxTrackedFiles: number;
+  maxEntities: number;
+  maxDownstreamAssets: number;
   requestTimeoutMs: number;
   maxRetries: number;
   failOnMissingMetadata: boolean;
   aiSummaryEnabled: boolean;
   aiSummaryEndpoint?: string | undefined;
+  strictSqlParse: boolean;
+  criticalAssetTags: string[];
+  allowedEndpointHosts: string[];
+  allowInsecureLocalEndpoints: boolean;
   maxCommentAssets: number;
 }
 
@@ -52,6 +61,7 @@ export interface ParsedEntity {
   database?: string | undefined;
   column?: string | undefined;
   rawReference: string;
+  confidence: EntityConfidence;
 }
 
 export interface CanonicalEntity {
@@ -63,6 +73,7 @@ export interface CanonicalEntity {
   schema?: string | undefined;
   database?: string | undefined;
   column?: string | undefined;
+  confidence: EntityConfidence;
 }
 
 export interface LineageNode {
@@ -72,6 +83,7 @@ export interface LineageNode {
   type: AssetType;
   url?: string | undefined;
   upstreamFrom?: string | undefined;
+  tags?: string[] | undefined;
 }
 
 export interface LineageResult {
@@ -88,16 +100,20 @@ export interface ImpactedAsset {
   type: AssetType;
   url?: string | undefined;
   reasons: string[];
+  tags?: string[] | undefined;
 }
 
 export interface ImpactSummary {
   riskLevel: RiskLevel;
   changedEntityCount: number;
+  lowConfidenceEntityCount: number;
   impactedAssetCount: number;
+  whatChanged: string[];
   warnings: string[];
   impactedByType: Record<AssetType, ImpactedAsset[]>;
   suggestions: string[];
   aiSummary?: string | undefined;
+  truncated: boolean;
 }
 
 export interface RequestOptions {
