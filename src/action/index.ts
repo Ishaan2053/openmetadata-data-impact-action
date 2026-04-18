@@ -1,4 +1,6 @@
 import * as core from "@actions/core";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { getConfig } from "./config";
 import { logError, logInfo, withLogGroup } from "./logging";
 import { DiffReader } from "./github/diffReader";
@@ -12,10 +14,130 @@ import { computeImpactSummary } from "./impact/classifier";
 import { renderDetailedImpactReport, renderImpactComment } from "./comment/render";
 import { upsertImpactComment } from "./comment/publish";
 import { buildOptionalAiSummary } from "./impact/aiSummary";
+import { ImpactSummary } from "./types";
+import {
+  AnalysisStatus,
+  computeAnalysisStatus,
+  countWarningCode,
+  formatWarning,
+  warningCodeCounts,
+} from "./warnings";
+
+const OUTPUT_JSON_MAX_ASSETS = 50;
+
+interface CompactImpactJson {
+  version: number;
+  generatedAt: string;
+  analysisStatus: AnalysisStatus;
+  riskLevel: string;
+  changedEntityCount: number;
+  lowConfidenceEntityCount: number;
+  impactedAssetCount: number;
+  warningCount: number;
+  warnings: string[];
+  warningCodeCounts: Record<string, number>;
+  truncated: boolean;
+  whatChanged: string[];
+  impactedByTypeCounts: Record<string, number>;
+  sampleImpactedAssets: Array<{
+    type: string;
+    fqn: string;
+    name: string;
+    reasons: string[];
+    tags?: string[];
+    owners?: string[];
+    domain?: string;
+  }>;
+}
 
 async function writeJobSummary(markdown: string): Promise<void> {
   await core.summary.clear();
   await core.summary.addRaw(markdown, true).write();
+}
+
+async function writeImpactJsonFile(filePath: string, payload: unknown): Promise<string> {
+  const resolvedPath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(process.cwd(), filePath);
+  await mkdir(path.dirname(resolvedPath), { recursive: true });
+  await writeFile(resolvedPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  return resolvedPath;
+}
+
+function buildCompactImpactJson(input: {
+  analysisStatus: AnalysisStatus;
+  riskLevel: string;
+  changedEntityCount: number;
+  lowConfidenceEntityCount: number;
+  impactedAssetCount: number;
+  warnings: string[];
+  truncated: boolean;
+  whatChanged: string[];
+  impactedByType?: ImpactSummary["impactedByType"];
+}): CompactImpactJson {
+  const impactedByTypeCounts: Record<string, number> = {
+    dashboard: 0,
+    pipeline: 0,
+    report: 0,
+    table: 0,
+    view: 0,
+    topic: 0,
+    other: 0,
+  };
+
+  const sampleImpactedAssets: CompactImpactJson["sampleImpactedAssets"] = [];
+
+  if (input.impactedByType) {
+    for (const [assetType, assets] of Object.entries(input.impactedByType)) {
+      impactedByTypeCounts[assetType] = assets.length;
+      for (const asset of assets) {
+        if (sampleImpactedAssets.length >= OUTPUT_JSON_MAX_ASSETS) {
+          break;
+        }
+
+        sampleImpactedAssets.push({
+          type: assetType,
+          fqn: asset.fqn,
+          name: asset.name,
+          reasons: asset.reasons,
+          ...(asset.tags ? { tags: asset.tags } : {}),
+          ...(asset.owners ? { owners: asset.owners } : {}),
+          ...(asset.domain ? { domain: asset.domain } : {}),
+        });
+      }
+    }
+  }
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    analysisStatus: input.analysisStatus,
+    riskLevel: input.riskLevel,
+    changedEntityCount: input.changedEntityCount,
+    lowConfidenceEntityCount: input.lowConfidenceEntityCount,
+    impactedAssetCount: input.impactedAssetCount,
+    warningCount: input.warnings.length,
+    warnings: input.warnings,
+    warningCodeCounts: warningCodeCounts(input.warnings),
+    truncated: input.truncated,
+    whatChanged: input.whatChanged,
+    impactedByTypeCounts,
+    sampleImpactedAssets,
+  };
+}
+
+async function emitStructuredOutputs(config: ReturnType<typeof getConfig>, compactPayload: CompactImpactJson, fullPayload: unknown): Promise<void> {
+  core.setOutput("analysis-status", compactPayload.analysisStatus);
+  core.setOutput("warning-code-counts", JSON.stringify(compactPayload.warningCodeCounts));
+  core.setOutput("impact-json", JSON.stringify(compactPayload));
+
+  if (config.impactJsonFile) {
+    const resolvedPath = await writeImpactJsonFile(config.impactJsonFile, fullPayload);
+    core.setOutput("impact-json-file", resolvedPath);
+    return;
+  }
+
+  core.setOutput("impact-json-file", "");
 }
 
 function createProvider(config: ReturnType<typeof getConfig>): {
@@ -44,9 +166,17 @@ function createProvider(config: ReturnType<typeof getConfig>): {
 }
 
 async function run(): Promise<void> {
+  let config: ReturnType<typeof getConfig> | undefined;
+
   try {
-    const config = getConfig();
-    const diffReader = new DiffReader(config);
+    config = getConfig();
+    if (!config) {
+      throw new Error("Failed to load action configuration.");
+    }
+
+    const runtimeConfig = config;
+
+    const diffReader = new DiffReader(runtimeConfig);
 
     const diff = await withLogGroup("Read pull request diff", async () => {
       return diffReader.readPullRequestDiff();
@@ -57,11 +187,14 @@ async function run(): Promise<void> {
 
     let trackedFiles = diffReader.filterTrackedFiles(diff.files);
 
-    if (trackedFiles.length > config.maxTrackedFiles) {
+    if (trackedFiles.length > runtimeConfig.maxTrackedFiles) {
       guardrailWarnings.push(
-        `Tracked file analysis truncated at ${config.maxTrackedFiles} files out of ${trackedFiles.length}.`,
+        formatWarning(
+          "TRUNCATED_TRACKED_FILES",
+          `Tracked file analysis truncated at ${runtimeConfig.maxTrackedFiles} files out of ${trackedFiles.length}.`,
+        ),
       );
-      trackedFiles = trackedFiles.slice(0, config.maxTrackedFiles);
+      trackedFiles = trackedFiles.slice(0, runtimeConfig.maxTrackedFiles);
       truncated = true;
     }
 
@@ -75,6 +208,23 @@ async function run(): Promise<void> {
       core.setOutput("changed-entity-count", "0");
       core.setOutput("low-confidence-entity-count", "0");
       core.setOutput("truncated-analysis", "false");
+
+      const compactPayload = buildCompactImpactJson({
+        analysisStatus: "skipped",
+        riskLevel: "low",
+        changedEntityCount: 0,
+        lowConfidenceEntityCount: 0,
+        impactedAssetCount: 0,
+        warnings: [],
+        truncated: false,
+        whatChanged: [],
+      });
+
+      await emitStructuredOutputs(runtimeConfig, compactPayload, {
+        ...compactPayload,
+        summary: "No tracked files changed in this pull request.",
+      });
+
       await writeJobSummary("## Data Impact Analysis\n\nNo tracked files changed in this pull request.");
       return;
     }
@@ -85,8 +235,8 @@ async function run(): Promise<void> {
 
     const extracted = await withLogGroup("Extract changed entities", async () => {
       return extractEntitiesFromFilesWithOptions(hydratedFiles, {
-        strictSqlParse: config.strictSqlParse,
-        maxEntities: config.maxEntities,
+        strictSqlParse: runtimeConfig.strictSqlParse,
+        maxEntities: runtimeConfig.maxEntities,
       });
     });
 
@@ -111,22 +261,41 @@ async function run(): Promise<void> {
         "No table or column references were extracted from tracked file changes.",
       ].join("\n");
 
-      await upsertImpactComment(config.githubToken, diff.prNumber, noEntityComment);
+      await upsertImpactComment(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
       core.setOutput("risk-level", "low");
       core.setOutput("impacted-asset-count", "0");
       core.setOutput("warning-count", String(extracted.warnings.length + guardrailWarnings.length));
       core.setOutput("changed-entity-count", "0");
       core.setOutput("low-confidence-entity-count", String(extracted.lowConfidenceEntityCount));
       core.setOutput("truncated-analysis", String(truncated));
+
+      const branchWarnings = [...guardrailWarnings, ...extracted.warnings];
+      const branchStatus = computeAnalysisStatus(branchWarnings, truncated);
+      const compactPayload = buildCompactImpactJson({
+        analysisStatus: branchStatus,
+        riskLevel: "low",
+        changedEntityCount: 0,
+        lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
+        impactedAssetCount: 0,
+        warnings: branchWarnings,
+        truncated,
+        whatChanged,
+      });
+
+      await emitStructuredOutputs(runtimeConfig, compactPayload, {
+        ...compactPayload,
+        report: noEntityComment,
+      });
+
       await writeJobSummary(noEntityComment);
       return;
     }
 
-    const providerConfig = createProvider(config);
+    const providerConfig = createProvider(runtimeConfig);
     const traversal = await withLogGroup("Resolve lineage and traverse downstream", async () => {
-      return traverseDownstream(providerConfig.provider, extracted.entities, config.maxLineageDepth, {
-        maxConcurrency: config.maxConcurrency,
-        maxDownstreamAssets: config.maxDownstreamAssets,
+      return traverseDownstream(providerConfig.provider, extracted.entities, runtimeConfig.maxLineageDepth, {
+        maxConcurrency: runtimeConfig.maxConcurrency,
+        maxDownstreamAssets: runtimeConfig.maxDownstreamAssets,
       });
     });
 
@@ -139,13 +308,13 @@ async function run(): Promise<void> {
       lineageResults: traversal.lineageResults,
       warnings: [...guardrailWarnings, ...extracted.warnings, ...traversal.warnings],
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
-      criticalAssetTags: config.criticalAssetTags,
-      riskThresholds: config.riskThresholds,
+      criticalAssetTags: runtimeConfig.criticalAssetTags,
+      riskThresholds: runtimeConfig.riskThresholds,
       truncated,
       whatChanged,
     });
 
-    const ai = await buildOptionalAiSummary(config, {
+    const ai = await buildOptionalAiSummary(runtimeConfig, {
       riskLevel: preSummary.riskLevel,
       changedEntityCount: preSummary.changedEntityCount,
       impactedAssetCount: preSummary.impactedAssetCount,
@@ -165,26 +334,24 @@ async function run(): Promise<void> {
       lineageResults: traversal.lineageResults,
       warnings: finalWarnings,
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
-      criticalAssetTags: config.criticalAssetTags,
-      riskThresholds: config.riskThresholds,
+      criticalAssetTags: runtimeConfig.criticalAssetTags,
+      riskThresholds: runtimeConfig.riskThresholds,
       truncated,
       whatChanged,
       ...(ai.summary ? { aiSummary: ai.summary } : {}),
     });
 
-    if (config.failOnMissingMetadata) {
-      const missingCount = finalSummary.warnings.filter((warning) =>
-        warning.toLowerCase().includes("missing metadata"),
-      ).length;
+    if (runtimeConfig.failOnMissingMetadata) {
+      const missingCount = countWarningCode(finalSummary.warnings, "METADATA_MISSING");
       if (missingCount > 0) {
         throw new Error(`Missing metadata detected for ${missingCount} entities.`);
       }
     }
 
-    const comment = renderImpactComment(finalSummary, config);
-    const detailedReport = renderDetailedImpactReport(finalSummary, config);
+    const comment = renderImpactComment(finalSummary, runtimeConfig);
+    const detailedReport = renderDetailedImpactReport(finalSummary, runtimeConfig);
     await withLogGroup("Publish PR comment", async () => {
-      await upsertImpactComment(config.githubToken, diff.prNumber, comment);
+      await upsertImpactComment(runtimeConfig.githubToken, diff.prNumber, comment);
     });
     await writeJobSummary(detailedReport);
 
@@ -195,11 +362,55 @@ async function run(): Promise<void> {
     core.setOutput("low-confidence-entity-count", String(finalSummary.lowConfidenceEntityCount));
     core.setOutput("truncated-analysis", String(finalSummary.truncated));
 
+    const analysisStatus = computeAnalysisStatus(finalSummary.warnings, finalSummary.truncated);
+    const compactPayload = buildCompactImpactJson({
+      analysisStatus,
+      riskLevel: finalSummary.riskLevel,
+      changedEntityCount: finalSummary.changedEntityCount,
+      lowConfidenceEntityCount: finalSummary.lowConfidenceEntityCount,
+      impactedAssetCount: finalSummary.impactedAssetCount,
+      warnings: finalSummary.warnings,
+      truncated: finalSummary.truncated,
+      whatChanged: finalSummary.whatChanged,
+      impactedByType: finalSummary.impactedByType,
+    });
+
+    await emitStructuredOutputs(runtimeConfig, compactPayload, {
+      ...compactPayload,
+      summary: finalSummary,
+    });
+
     logInfo(
       `Impact analysis complete. Risk=${finalSummary.riskLevel} impacted=${finalSummary.impactedAssetCount}.`,
     );
   } catch (error) {
     logError(`Impact analysis failed: ${String(error)}`);
+    core.setOutput("analysis-status", "failed");
+    core.setOutput("warning-code-counts", "{}");
+    core.setOutput(
+      "impact-json",
+      JSON.stringify({
+        version: 1,
+        generatedAt: new Date().toISOString(),
+        analysisStatus: "failed",
+        error: String(error),
+      }),
+    );
+    if (config?.impactJsonFile) {
+      try {
+        const resolvedPath = await writeImpactJsonFile(config.impactJsonFile, {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          analysisStatus: "failed",
+          error: String(error),
+        });
+        core.setOutput("impact-json-file", resolvedPath);
+      } catch {
+        core.setOutput("impact-json-file", "");
+      }
+    } else {
+      core.setOutput("impact-json-file", "");
+    }
     core.setFailed(String(error));
   }
 }

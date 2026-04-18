@@ -1,5 +1,6 @@
 import { ChangedFile, ParsedEntity } from "../types";
 import { logWarning } from "../logging";
+import { formatWarning } from "../warnings";
 import { extractSqlEntities } from "./sqlExtractor";
 import { extractDbtEntities } from "./dbtExtractor";
 import { extractSchemaEntities } from "./schemaExtractor";
@@ -64,7 +65,10 @@ export function extractEntitiesFromFilesWithOptions(files: ChangedFile[], option
         parsed.push(...extractSchemaEntities(file));
       }
     } catch (error) {
-      const message = `Failed to parse ${file.path}: ${String(error)}`;
+      const message = formatWarning(
+        "PARSE_FAILED",
+        `Failed to parse ${file.path}: ${String(error)}`,
+      );
       warnings.push(message);
       logWarning(message);
     }
@@ -75,7 +79,10 @@ export function extractEntitiesFromFilesWithOptions(files: ChangedFile[], option
   if (normalized.length > options.maxEntities) {
     truncated = true;
     warnings.push(
-      `Entity extraction truncated at ${options.maxEntities} entities out of ${normalized.length}.`,
+      formatWarning(
+        "TRUNCATED_ENTITIES",
+        `Entity extraction truncated at ${options.maxEntities} entities out of ${normalized.length}.`,
+      ),
     );
     normalized = normalized.slice(0, options.maxEntities);
   }

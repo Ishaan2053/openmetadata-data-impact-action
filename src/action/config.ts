@@ -8,7 +8,6 @@ import {
 
 export const DEFAULT_PATTERNS = [
   "**/*.sql",
-  "**/models/**/*.sql",
   "**/models/**/*.yml",
   "**/models/**/*.yaml",
   "**/schema.yml",
@@ -147,6 +146,7 @@ export function getConfig(): ActionConfig {
   const lineageProvider = parseProviderMode(core.getInput("lineage-provider") || "auto");
   const mcpEndpointRaw = core.getInput("mcp-endpoint").trim();
   const aiSummaryEndpointRaw = core.getInput("ai-summary-endpoint").trim();
+  const impactJsonFileRaw = core.getInput("impact-json-file").trim();
   const allowedEndpointHosts = parseList(core.getInput("allowed-endpoint-hosts")).map((host) =>
     host.toLowerCase(),
   );
@@ -208,6 +208,10 @@ export function getConfig(): ActionConfig {
 
   if (aiSummaryEndpointRaw.length > 0) {
     config.aiSummaryEndpoint = aiSummaryEndpointRaw;
+  }
+
+  if (impactJsonFileRaw.length > 0) {
+    config.impactJsonFile = impactJsonFileRaw;
   }
 
   validateEndpoint(

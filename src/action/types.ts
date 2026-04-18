@@ -41,6 +41,7 @@ export interface ActionConfig {
   failOnMissingMetadata: boolean;
   aiSummaryEnabled: boolean;
   aiSummaryEndpoint?: string | undefined;
+  impactJsonFile?: string | undefined;
   strictSqlParse: boolean;
   criticalAssetTags: string[];
   riskThresholds: RiskThresholds;
