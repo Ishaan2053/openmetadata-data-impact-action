@@ -9,9 +9,11 @@
     "bundle:action": "npm run build && ncc build dist/action/index.js -o bundle",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.js\"",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/**/*.test.js",
-    "check": "npm run typecheck && npm run test && npm run bundle:action"
+    "test:coverage": "npm run build && c8 --check-coverage --lines 25 --branches 20 --functions 25 --statements 25 node --test test/**/*.test.js",
+    "check": "npm run lint && npm run typecheck && npm run test:coverage && npm run bundle:action"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +21,7 @@
   "private": true,
   "type": "commonjs",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
@@ -28,9 +30,14 @@
     "minimatch": "^10.1.1"
   },
   "devDependencies": {
-    "@vercel/ncc": "^0.38.4",
+    "@eslint/js": "^9.39.4",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
-    "typescript": "^6.0.3"
+    "@vercel/ncc": "^0.38.4",
+    "c8": "^11.0.0",
+    "eslint": "^9.39.4",
+    "globals": "^17.5.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.58.2"
   }
 }
