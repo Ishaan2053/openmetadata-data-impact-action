@@ -7,7 +7,9 @@ const DBT_SOURCE_PATTERN =
 
 function buildModelEntity(filePath: string): ParsedEntity | undefined {
   const normalized = filePath.replace(/\\/g, "/");
-  if (!normalized.includes("/models/") || !normalized.toLowerCase().endsWith(".sql")) {
+  const lower = normalized.toLowerCase();
+  const inModelsDir = lower.startsWith("models/") || lower.includes("/models/");
+  if (!inModelsDir || !lower.endsWith(".sql")) {
     return undefined;
   }
 

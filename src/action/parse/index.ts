@@ -16,8 +16,13 @@ function isSchemaLike(path: string): boolean {
 }
 
 function isDbtLike(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.includes("/models/") || lower.endsWith("dbt_project.yml") || lower.endsWith("dbt_project.yaml");
+  const lower = path.replace(/\\/g, "/").toLowerCase();
+  return (
+    lower.startsWith("models/") ||
+    lower.includes("/models/") ||
+    lower.endsWith("dbt_project.yml") ||
+    lower.endsWith("dbt_project.yaml")
+  );
 }
 
 export function extractEntitiesFromFiles(files: ChangedFile[]): {
@@ -45,12 +50,14 @@ export function extractEntitiesFromFilesWithOptions(files: ChangedFile[], option
   for (const file of files) {
     try {
       const lower = file.path.toLowerCase();
-      if (lower.endsWith(".sql")) {
-        parsed.push(...extractSqlEntities(file, { strictMode: options.strictSqlParse }));
+      const dbtLike = isDbtLike(file.path);
+
+      if (dbtLike) {
+        parsed.push(...extractDbtEntities(file));
       }
 
-      if (isDbtLike(file.path)) {
-        parsed.push(...extractDbtEntities(file));
+      if (lower.endsWith(".sql") && !dbtLike) {
+        parsed.push(...extractSqlEntities(file, { strictMode: options.strictSqlParse }));
       }
 
       if (isSchemaLike(file.path)) {

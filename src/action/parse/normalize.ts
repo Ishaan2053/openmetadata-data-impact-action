@@ -6,6 +6,12 @@ const CONFIDENCE_SCORE = {
   low: 1,
 } as const;
 
+const SOURCE_KIND_SCORE = {
+  dbt: 3,
+  schema: 2,
+  sql: 1,
+} as const;
+
 function cleanIdentifier(raw: string): string {
   return raw.replace(/[`,"\[\]]/g, "").trim().toLowerCase();
 }
@@ -40,7 +46,7 @@ export function normalizeEntities(entities: ParsedEntity[]): CanonicalEntity[] {
 
     const column = entity.column ? cleanIdentifier(entity.column) : undefined;
     const fqn = [database, schema, table, column].filter(Boolean).join(".");
-    const dedupeKey = `${entity.sourceKind}:${fqn}:${entity.sourceFile}`;
+    const dedupeKey = fqn;
 
     const candidate: CanonicalEntity = {
       sourceKind: entity.sourceKind,
@@ -60,8 +66,20 @@ export function normalizeEntities(entities: ParsedEntity[]): CanonicalEntity[] {
       continue;
     }
 
-    if (CONFIDENCE_SCORE[candidate.confidence] > CONFIDENCE_SCORE[existing.confidence]) {
+    const candidateConfidence = CONFIDENCE_SCORE[candidate.confidence];
+    const existingConfidence = CONFIDENCE_SCORE[existing.confidence];
+
+    if (candidateConfidence > existingConfidence) {
       normalized.set(dedupeKey, candidate);
+      continue;
+    }
+
+    if (candidateConfidence === existingConfidence) {
+      const candidateSourceScore = SOURCE_KIND_SCORE[candidate.sourceKind];
+      const existingSourceScore = SOURCE_KIND_SCORE[existing.sourceKind];
+      if (candidateSourceScore > existingSourceScore) {
+        normalized.set(dedupeKey, candidate);
+      }
     }
   }
 
