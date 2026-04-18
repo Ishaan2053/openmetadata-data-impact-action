@@ -64,12 +64,17 @@ export class DiffReader {
       throw new Error("This action requires a pull_request event context.");
     }
 
-    const files = await this.octokit.paginate(this.octokit.rest.pulls.listFiles, {
+    const files = (await this.octokit.paginate(this.octokit.rest.pulls.listFiles, {
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: pullRequest.number,
       per_page: 100,
-    });
+    })) as Array<{
+      filename: string;
+      status: string;
+      previous_filename?: string;
+      patch?: string;
+    }>;
 
     const mappedFiles: ChangedFile[] = files.map((file) => ({
       path: file.filename,

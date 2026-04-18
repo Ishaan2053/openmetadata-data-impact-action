@@ -71,13 +71,15 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
 
   let authenticatedLogin: string | undefined;
   try {
-    const auth = await withRetry(() => octokit.rest.users.getAuthenticated(), 2);
-    authenticatedLogin = auth.data.login;
+    const auth = (await withRetry(() => octokit.rest.users.getAuthenticated(), 2)) as {
+      data?: { login?: string };
+    };
+    authenticatedLogin = auth.data?.login;
   } catch {
     // Continue without strict ownership check if auth identity cannot be resolved.
   }
 
-  const comments = await withRetry(
+  const comments = (await withRetry(
     () =>
       octokit.paginate(octokit.rest.issues.listComments, {
         owner: context.repo.owner,
@@ -86,7 +88,11 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
         per_page: 100,
       }),
     2,
-  );
+  )) as Array<{
+    id: number;
+    body?: string;
+    user?: { login?: string; type?: string };
+  }>;
 
   const formattedBody = withMarker(body);
   const existing = comments.find((comment) => {
@@ -116,7 +122,7 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
     return;
   }
 
-  const created = await withRetry(
+  const created = (await withRetry(
     () =>
       octokit.rest.issues.createComment({
         owner: context.repo.owner,
@@ -125,7 +131,7 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
         body: formattedBody,
       }),
     2,
-  );
+  )) as { data?: { id?: number } };
 
-  logInfo(`Created impact analysis comment (${created.data.id}).`);
+  logInfo(`Created impact analysis comment (${created.data?.id ?? "unknown"}).`);
 }
