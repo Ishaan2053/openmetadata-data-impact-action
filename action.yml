@@ -16,7 +16,6 @@ inputs:
     required: false
     default: |
       **/*.sql
-      **/models/**/*.sql
       **/models/**/*.yml
       **/models/**/*.yaml
       **/schema.yml
@@ -108,6 +107,9 @@ inputs:
   ai-summary-endpoint:
     description: Optional HTTP endpoint for external AI summarization
     required: false
+  impact-json-file:
+    description: Optional path to write full structured impact JSON (for artifact upload)
+    required: false
   allowed-endpoint-hosts:
     description: Optional comma or newline separated endpoint hostname allowlist
     required: false
@@ -133,6 +135,14 @@ outputs:
     description: Number of low confidence extracted entities
   truncated-analysis:
     description: Whether analysis was truncated by guardrails
+  analysis-status:
+    description: Overall analysis state (success|partial|degraded|skipped|failed)
+  warning-code-counts:
+    description: JSON object mapping warning taxonomy code to occurrence count
+  impact-json:
+    description: Compact structured impact JSON for workflow automation
+  impact-json-file:
+    description: Resolved path to full structured JSON file when impact-json-file input is set
 
 runs:
   using: node24
