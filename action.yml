@@ -1,0 +1,115 @@
+name: OpenMetadata Data Impact Analysis
+description: Analyze PR data changes (SQL/dbt/schema) and report downstream impact from OpenMetadata
+
+inputs:
+  openmetadata-endpoint:
+    description: OpenMetadata API base URL (for example, https://metadata.example.com)
+    required: true
+  auth-token:
+    description: OpenMetadata bearer token
+    required: true
+  github-token:
+    description: GitHub token used to read PR diff and publish comments
+    required: false
+  file-patterns:
+    description: Comma or newline separated glob patterns for tracked files
+    required: false
+    default: |
+      **/*.sql
+      **/models/**/*.sql
+      **/models/**/*.yml
+      **/models/**/*.yaml
+      **/schema.yml
+      **/schema.yaml
+      **/dbt_project.yml
+      **/dbt_project.yaml
+  lineage-provider:
+    description: Lineage backend (api|mcp|auto)
+    required: false
+    default: auto
+  mcp-endpoint:
+    description: Optional HTTP endpoint for MCP lineage adapter
+    required: false
+  max-lineage-depth:
+    description: Maximum downstream traversal depth
+    required: false
+    default: "3"
+  max-concurrency:
+    description: Maximum concurrent lineage lookups
+    required: false
+    default: "4"
+  max-tracked-files:
+    description: Maximum tracked files analyzed per PR
+    required: false
+    default: "200"
+  max-entities:
+    description: Maximum extracted entities analyzed per PR
+    required: false
+    default: "500"
+  max-downstream-assets:
+    description: Maximum downstream assets traversed before truncation
+    required: false
+    default: "2000"
+  request-timeout-ms:
+    description: HTTP request timeout in milliseconds
+    required: false
+    default: "15000"
+  max-retries:
+    description: Maximum retries for transient API failures
+    required: false
+    default: "3"
+  fail-on-missing-metadata:
+    description: Fail action if referenced entities cannot be resolved in metadata
+    required: false
+    default: "false"
+  ai-summary-enabled:
+    description: Enable optional AI summary layer
+    required: false
+    default: "false"
+  strict-sql-parse:
+    description: Use stricter SQL parsing mode for higher precision
+    required: false
+    default: "false"
+  critical-asset-tags:
+    description: Comma or newline separated critical asset tags for risk scoring
+    required: false
+    default: |
+      tier1
+      critical
+      business_critical
+  ai-summary-endpoint:
+    description: Optional HTTP endpoint for external AI summarization
+    required: false
+  allowed-endpoint-hosts:
+    description: Optional comma or newline separated endpoint hostname allowlist
+    required: false
+  allow-insecure-local-endpoints:
+    description: Allow http endpoints for localhost or loopback only
+    required: false
+    default: "false"
+  max-comment-assets:
+    description: Maximum impacted assets shown per type in PR comment
+    required: false
+    default: "20"
+
+outputs:
+  risk-level:
+    description: Computed risk level (high|medium|low)
+  impacted-asset-count:
+    description: Total impacted downstream assets
+  warning-count:
+    description: Number of warnings generated during analysis
+  changed-entity-count:
+    description: Number of changed entities extracted from PR files
+  low-confidence-entity-count:
+    description: Number of low confidence extracted entities
+  truncated-analysis:
+    description: Whether analysis was truncated by guardrails
+
+runs:
+  using: node24
+  main: bundle/index.js
+
+branding:
+  icon: activity
+  color: blue

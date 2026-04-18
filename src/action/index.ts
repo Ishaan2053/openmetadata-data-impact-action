@@ -56,7 +56,6 @@ async function run(): Promise<void> {
     let truncated = false;
 
     let trackedFiles = diffReader.filterTrackedFiles(diff.files);
-    const whatChanged = diffReader.deriveWhatChanged(trackedFiles);
 
     if (trackedFiles.length > config.maxTrackedFiles) {
       guardrailWarnings.push(
@@ -65,6 +64,8 @@ async function run(): Promise<void> {
       trackedFiles = trackedFiles.slice(0, config.maxTrackedFiles);
       truncated = true;
     }
+
+    const whatChanged = diffReader.deriveWhatChanged(trackedFiles);
 
     if (trackedFiles.length === 0) {
       logInfo("No tracked files changed in this pull request. Skipping impact analysis.");
