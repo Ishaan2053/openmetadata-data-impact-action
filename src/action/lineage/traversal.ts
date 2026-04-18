@@ -1,5 +1,6 @@
 import { CanonicalEntity, LineageResult } from "../types";
 import { logDebug } from "../logging";
+import { extractWarningCode, formatWarning } from "../warnings";
 import { LineageProvider } from "./provider";
 
 export interface TraversalResult {
@@ -82,7 +83,10 @@ export async function traverseDownstream(
           if (discoveredDownstream.size > options.maxDownstreamAssets) {
             truncated = true;
             warnings.push(
-              `Downstream traversal truncated at ${options.maxDownstreamAssets} assets. Increase max-downstream-assets for full graph coverage.`,
+              formatWarning(
+                "TRUNCATED_DOWNSTREAM",
+                `Downstream traversal truncated at ${options.maxDownstreamAssets} assets. Increase max-downstream-assets for full graph coverage.`,
+              ),
             );
             break;
           }
@@ -100,7 +104,7 @@ export async function traverseDownstream(
     }
 
     const sawRateLimit = levelResults.some((result) =>
-      result.warnings.some((warning) => warning.includes("(429)") || warning.toLowerCase().includes("rate")),
+      result.warnings.some((warning) => extractWarningCode(warning) === "RATE_LIMITED"),
     );
 
     if (sawRateLimit) {

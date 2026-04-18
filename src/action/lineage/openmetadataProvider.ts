@@ -1,5 +1,6 @@
 import { ActionConfig, AssetType, CanonicalEntity, LineageNode, LineageResult } from "../types";
 import { logDebug, logWarning } from "../logging";
+import { formatWarning, WarningCode } from "../warnings";
 import { LineageProvider } from "./provider";
 
 interface RequestResult {
@@ -194,6 +195,22 @@ function buildLineageEndpoints(base: string, fqn: string, depth: number): string
   ];
 }
 
+function warningCodeForStatus(status: number): WarningCode {
+  if (status === 401 || status === 403) {
+    return "AUTH_ERROR";
+  }
+  if (status === 429) {
+    return "RATE_LIMITED";
+  }
+  if (status === 599) {
+    return "NETWORK_ERROR";
+  }
+  if (status >= 500) {
+    return "SERVICE_UNAVAILABLE";
+  }
+  return "LINEAGE_REQUEST_FAILED";
+}
+
 function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
   nodes: LineageNode[];
   partial: boolean;
@@ -206,7 +223,9 @@ function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
     return {
       nodes,
       partial: true,
-      warnings: ["Lineage API returned an empty payload."],
+      warnings: [
+        formatWarning("LINEAGE_EMPTY_PAYLOAD", "Lineage API returned an empty payload."),
+      ],
     };
   }
 
@@ -296,6 +315,8 @@ export class OpenMetadataLineageProvider implements LineageProvider {
   private async getDownstreamUncached(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
     const warnings: string[] = [];
     const candidates = buildFqnCandidates(entity);
+    let sawLookupFailure = false;
+    let sawNotFound = false;
 
     for (const candidate of candidates) {
       const endpoints = buildLineageEndpoints(this.config.openMetadataEndpoint, candidate, depth);
@@ -303,12 +324,17 @@ export class OpenMetadataLineageProvider implements LineageProvider {
       for (const endpoint of endpoints) {
         const response = await this.requestWithRetry(endpoint);
         if (response.status === 404) {
+          sawNotFound = true;
           logDebug(`Entity not found for candidate ${candidate} via ${endpoint}.`);
           continue;
         }
 
         if (!response.ok) {
-          const warning = `Lineage request failed (${response.status}) for ${candidate}.`;
+          sawLookupFailure = true;
+          const warning = formatWarning(
+            warningCodeForStatus(response.status),
+            `Lineage request failed (${response.status}) for ${candidate}.`,
+          );
           warnings.push(warning);
           logWarning(warning);
           continue;
@@ -325,11 +351,41 @@ export class OpenMetadataLineageProvider implements LineageProvider {
       }
     }
 
+    if (sawLookupFailure) {
+      return {
+        sourceEntityFqn: entity.fqn,
+        nodes: [],
+        partial: true,
+        warnings: [
+          ...warnings,
+          formatWarning(
+            "LINEAGE_UNAVAILABLE",
+            `Unable to fully resolve lineage for ${entity.fqn} due to upstream request failures.`,
+          ),
+        ],
+      };
+    }
+
+    if (sawNotFound) {
+      return {
+        sourceEntityFqn: entity.fqn,
+        nodes: [],
+        partial: true,
+        warnings: [...warnings, formatWarning("METADATA_MISSING", `Missing metadata for ${entity.fqn}.`)],
+      };
+    }
+
     return {
       sourceEntityFqn: entity.fqn,
       nodes: [],
       partial: true,
-      warnings: [...warnings, `Missing metadata for ${entity.fqn}.`],
+      warnings: [
+        ...warnings,
+        formatWarning(
+          "LINEAGE_UNAVAILABLE",
+          `Unable to resolve lineage for ${entity.fqn}; no successful metadata lookup was observed.`,
+        ),
+      ],
     };
   }
 

@@ -1,4 +1,5 @@
 import { ActionConfig, CanonicalEntity, LineageNode, LineageResult } from "../types";
+import { formatWarning } from "../warnings";
 import { LineageProvider } from "./provider";
 
 interface McpResponse {
@@ -59,7 +60,12 @@ export class McpLineageProvider implements LineageProvider {
         sourceEntityFqn: entity.fqn,
         nodes: [],
         partial: true,
-        warnings: ["MCP lineage provider selected, but mcp-endpoint is not configured."],
+        warnings: [
+          formatWarning(
+            "MCP_NOT_CONFIGURED",
+            "MCP lineage provider selected, but mcp-endpoint is not configured.",
+          ),
+        ],
       };
     }
 
@@ -92,7 +98,12 @@ export class McpLineageProvider implements LineageProvider {
           sourceEntityFqn: entity.fqn,
           nodes: [],
           partial: true,
-          warnings: [`MCP provider request failed with status ${response.status}.`],
+          warnings: [
+            formatWarning(
+              "MCP_REQUEST_FAILED",
+              `MCP provider request failed with status ${response.status}.`,
+            ),
+          ],
         };
       }
 
@@ -138,14 +149,18 @@ export class McpLineageProvider implements LineageProvider {
         sourceEntityFqn: entity.fqn,
         nodes,
         partial: body.partial ?? false,
-        warnings: body.warnings ?? [],
+        warnings: (body.warnings ?? []).map((warning) =>
+          formatWarning("MCP_PROVIDER_WARNING", warning),
+        ),
       };
     } catch (error) {
       return {
         sourceEntityFqn: entity.fqn,
         nodes: [],
         partial: true,
-        warnings: [`MCP provider request failed: ${String(error)}`],
+        warnings: [
+          formatWarning("MCP_REQUEST_FAILED", `MCP provider request failed: ${String(error)}`),
+        ],
       };
     } finally {
       clearTimeout(timer);

@@ -1,4 +1,5 @@
 import { ActionConfig, ImpactSummary } from "../types";
+import { formatWarning } from "../warnings";
 
 interface AiSummaryPayload {
   summary?: string;
@@ -15,8 +16,10 @@ export async function buildOptionalAiSummary(
   if (!config.aiSummaryEndpoint) {
     return {
       summary: `Risk ${impactSeed.riskLevel.toUpperCase()}: ${impactSeed.impactedAssetCount} impacted assets across downstream dependencies.`,
-      warning:
+      warning: formatWarning(
+        "AI_SUMMARY_FALLBACK",
         "AI summary enabled without ai-summary-endpoint. Using deterministic fallback summary.",
+      ),
     };
   }
 
@@ -38,21 +41,24 @@ export async function buildOptionalAiSummary(
 
     if (!response.ok) {
       return {
-        warning: `AI summary request failed with status ${response.status}.`,
+        warning: formatWarning(
+          "AI_SUMMARY_FAILED",
+          `AI summary request failed with status ${response.status}.`,
+        ),
       };
     }
 
     const data = (await response.json()) as AiSummaryPayload;
     if (!data.summary) {
       return {
-        warning: "AI summary endpoint returned no summary text.",
+        warning: formatWarning("AI_SUMMARY_FAILED", "AI summary endpoint returned no summary text."),
       };
     }
 
     return { summary: data.summary };
   } catch (error) {
     return {
-      warning: `AI summary request failed: ${String(error)}`,
+      warning: formatWarning("AI_SUMMARY_FAILED", `AI summary request failed: ${String(error)}`),
     };
   } finally {
     clearTimeout(timer);
