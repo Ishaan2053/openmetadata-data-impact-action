@@ -142,3 +142,21 @@ test("OpenMetadata provider returns missing metadata warning when all candidates
     global.fetch = originalFetch;
   }
 });
+
+test("OpenMetadata provider marks lineage unavailable on upstream failure without mislabeling metadata missing", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => response(503, { message: "service unavailable" });
+
+  try {
+    const provider = new OpenMetadataLineageProvider(createConfig({ maxRetries: 0 }));
+    const result = await provider.getDownstream(createEntity(), 1);
+
+    assert.equal(result.nodes.length, 0);
+    assert.equal(result.partial, true);
+    assert.ok(result.warnings.some((warning) => warning.includes("[SERVICE_UNAVAILABLE]")));
+    assert.ok(result.warnings.some((warning) => warning.includes("[LINEAGE_UNAVAILABLE]")));
+    assert.ok(!result.warnings.some((warning) => warning.includes("[METADATA_MISSING]")));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

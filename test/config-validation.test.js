@@ -56,3 +56,15 @@ test("getConfig allows localhost http endpoint when explicitly enabled", () => {
 
   assert.equal(config.openMetadataEndpoint, "http://localhost:8585");
 });
+
+test("getConfig parses optional impact-json-file input", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "impact-json-file": ".artifacts/impact.json",
+  };
+
+  const config = withMockedInputs(inputMap, {}, () => getConfig());
+  assert.equal(config.impactJsonFile, ".artifacts/impact.json");
+});
