@@ -77,6 +77,34 @@ inputs:
       tier1
       critical
       business_critical
+  risk-high-dashboard-count:
+    description: Dashboard impact count threshold for high risk
+    required: false
+    default: "5"
+  risk-high-pipeline-count:
+    description: Pipeline impact count threshold for high risk
+    required: false
+    default: "4"
+  risk-high-report-count:
+    description: Report impact count threshold for high risk
+    required: false
+    default: "8"
+  risk-high-total-assets:
+    description: Total impacted assets threshold for high risk
+    required: false
+    default: "20"
+  risk-high-warning-count:
+    description: Warning count threshold that can trigger high risk with sufficient impacted assets
+    required: false
+    default: "3"
+  risk-high-warning-min-assets:
+    description: Minimum impacted assets required when warning threshold is met for high risk
+    required: false
+    default: "8"
+  risk-high-low-confidence-count:
+    description: Low-confidence changed entity threshold for high risk
+    required: false
+    default: "10"
   ai-summary-endpoint:
     description: Optional HTTP endpoint for external AI summarization
     required: false

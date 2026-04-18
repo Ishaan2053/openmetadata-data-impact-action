@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run OpenMetadata impact analysis
-        uses: Ishaan2053/openmetadata-github-action@main
+        uses: Ishaan2053/openmetadata-github-action@v1
         with:
           openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
           auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
@@ -56,7 +56,7 @@ jobs:
 
 ```yaml
 - name: Analyze impact
-  uses: Ishaan2053/openmetadata-github-action@main
+  uses: Ishaan2053/openmetadata-github-action@v1
   with:
     openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
     auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
@@ -69,7 +69,7 @@ jobs:
 
 ```yaml
 - name: Analyze impact (strict)
-  uses: Ishaan2053/openmetadata-github-action@main
+  uses: Ishaan2053/openmetadata-github-action@v1
   with:
     openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
     auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
@@ -83,7 +83,7 @@ jobs:
 
 ```yaml
 - name: Analyze impact (hardened)
-  uses: Ishaan2053/openmetadata-github-action@main
+  uses: Ishaan2053/openmetadata-github-action@v1
   with:
     openmetadata-endpoint: https://metadata.example.com
     auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
@@ -114,7 +114,7 @@ The action exposes the following outputs:
 ```yaml
 - name: Analyze impact
   id: impact
-  uses: Ishaan2053/openmetadata-github-action@main
+  uses: Ishaan2053/openmetadata-github-action@v1
   with:
     openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
     auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
@@ -149,6 +149,13 @@ The action exposes the following outputs:
 | `ai-summary-endpoint` | no | - | Optional endpoint for external AI summary |
 | `strict-sql-parse` | no | `false` | Stricter SQL parsing mode |
 | `critical-asset-tags` | no | `tier1,critical,business_critical` | Critical tags that increase risk |
+| `risk-high-dashboard-count` | no | `5` | High-risk threshold for impacted dashboards |
+| `risk-high-pipeline-count` | no | `4` | High-risk threshold for impacted pipelines |
+| `risk-high-report-count` | no | `8` | High-risk threshold for impacted reports |
+| `risk-high-total-assets` | no | `20` | High-risk threshold for total impacted assets |
+| `risk-high-warning-count` | no | `3` | Warning count threshold that can escalate to high risk |
+| `risk-high-warning-min-assets` | no | `8` | Minimum impacted assets when warning threshold is met |
+| `risk-high-low-confidence-count` | no | `10` | High-risk threshold for low-confidence extracted entities |
 | `allowed-endpoint-hosts` | no | - | Optional endpoint hostname allowlist |
 | `allow-insecure-local-endpoints` | no | `false` | Allow `http://` for localhost/loopback only |
 | `max-comment-assets` | no | `20` | Max impacted assets shown per type in PR comment |
