@@ -9,9 +9,20 @@ interface McpResponse {
     type?: string;
     url?: string;
     tags?: string[];
+    owners?: string[];
+    domain?: string;
+    glossaryTerms?: string[];
   }>;
   warnings?: string[];
   partial?: boolean;
+}
+
+function normalizeList(values: string[] | undefined): string[] | undefined {
+  if (!values || values.length === 0) {
+    return undefined;
+  }
+
+  return [...new Set(values.map((value) => value.toLowerCase()))];
 }
 
 function mapType(raw: string | undefined): LineageNode["type"] {
@@ -105,7 +116,19 @@ export class McpLineageProvider implements LineageProvider {
         }
 
         if (Array.isArray(node.tags) && node.tags.length > 0) {
-          mapped.tags = node.tags.map((tag) => tag.toLowerCase());
+          mapped.tags = normalizeList(node.tags);
+        }
+
+        if (Array.isArray(node.owners) && node.owners.length > 0) {
+          mapped.owners = normalizeList(node.owners);
+        }
+
+        if (Array.isArray(node.glossaryTerms) && node.glossaryTerms.length > 0) {
+          mapped.glossaryTerms = normalizeList(node.glossaryTerms);
+        }
+
+        if (typeof node.domain === "string" && node.domain.length > 0) {
+          mapped.domain = node.domain.toLowerCase();
         }
 
         nodes.push(mapped);

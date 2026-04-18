@@ -1,5 +1,33 @@
-import { CanonicalEntity, LineageResult } from "../types";
+import { CanonicalEntity, LineageNode, LineageResult } from "../types";
 import { LineageProvider } from "./provider";
+
+function mergeNodes(primary: LineageNode[], fallback: LineageNode[]): LineageNode[] {
+  const merged = new Map<string, LineageNode>();
+
+  for (const node of [...primary, ...fallback]) {
+    const existing = merged.get(node.fqn);
+    if (!existing) {
+      merged.set(node.fqn, node);
+      continue;
+    }
+
+    const combinedTags = [...(existing.tags ?? []), ...(node.tags ?? [])];
+    const combinedOwners = [...(existing.owners ?? []), ...(node.owners ?? [])];
+    const combinedTerms = [...(existing.glossaryTerms ?? []), ...(node.glossaryTerms ?? [])];
+
+    merged.set(node.fqn, {
+      ...existing,
+      ...node,
+      url: existing.url ?? node.url,
+      domain: existing.domain ?? node.domain,
+      tags: combinedTags.length > 0 ? [...new Set(combinedTags)] : undefined,
+      owners: combinedOwners.length > 0 ? [...new Set(combinedOwners)] : undefined,
+      glossaryTerms: combinedTerms.length > 0 ? [...new Set(combinedTerms)] : undefined,
+    });
+  }
+
+  return [...merged.values()];
+}
 
 export class FallbackLineageProvider implements LineageProvider {
   readonly name: string;
@@ -15,23 +43,24 @@ export class FallbackLineageProvider implements LineageProvider {
     const primaryResult = await this.primary.getDownstream(entity, depth);
 
     const shouldFallback =
-      primaryResult.nodes.length === 0 &&
-      (primaryResult.partial || primaryResult.warnings.length > 0);
+      primaryResult.partial ||
+      (primaryResult.nodes.length === 0 && primaryResult.warnings.length > 0);
 
     if (!shouldFallback) {
       return primaryResult;
     }
 
     const fallbackResult = await this.fallback.getDownstream(entity, depth);
+    const mergedNodes = mergeNodes(primaryResult.nodes, fallbackResult.nodes);
     return {
       sourceEntityFqn: entity.fqn,
-      nodes: fallbackResult.nodes,
-      partial: fallbackResult.partial,
-      warnings: [
+      nodes: mergedNodes,
+      partial: primaryResult.partial || fallbackResult.partial,
+      warnings: [...new Set([
         ...primaryResult.warnings,
         ...fallbackResult.warnings,
         `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
-      ],
+      ])],
     };
   }
 }

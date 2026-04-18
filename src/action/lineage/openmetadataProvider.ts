@@ -60,6 +60,34 @@ function normalizeType(value: string | undefined): AssetType {
   return "other";
 }
 
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readEntityName(input: unknown): string | undefined {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const obj = input as Record<string, unknown>;
+  return (
+    asString(obj.fullyQualifiedName) ??
+    asString(obj.displayName) ??
+    asString(obj.name)
+  );
+}
+
+function normalizeList(values: string[]): string[] | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+  return [...new Set(values.map((value) => value.toLowerCase()))];
+}
+
 function readNode(input: unknown): LineageNode | undefined {
   if (!input || typeof input !== "object") {
     return undefined;
@@ -77,6 +105,9 @@ function readNode(input: unknown): LineageNode | undefined {
   const typeRaw = item.type ?? item.entityType;
   const urlRaw = item.href ?? item.url;
   const tagsRaw = item.tags;
+  const ownersRaw = item.owners ?? item.owner;
+  const glossaryRaw = item.glossaryTerms;
+  const domainRaw = item.domain;
 
   const tags: string[] = [];
   if (Array.isArray(tagsRaw)) {
@@ -99,13 +130,41 @@ function readNode(input: unknown): LineageNode | undefined {
     }
   }
 
+  const owners: string[] = [];
+  const ownerCandidates = Array.isArray(ownersRaw)
+    ? ownersRaw
+    : ownersRaw
+      ? [ownersRaw]
+      : [];
+  for (const owner of ownerCandidates) {
+    const candidate = readEntityName(owner);
+    if (candidate) {
+      owners.push(candidate);
+    }
+  }
+
+  const glossaryTerms: string[] = [];
+  if (Array.isArray(glossaryRaw)) {
+    for (const term of glossaryRaw) {
+      const candidate = readEntityName(term);
+      if (candidate) {
+        glossaryTerms.push(candidate);
+      }
+    }
+  }
+
+  const domain = readEntityName(domainRaw);
+
   return {
     id: idRaw,
     fqn: fqnRaw,
     name: nameRaw,
     type: normalizeType(typeof typeRaw === "string" ? typeRaw : undefined),
     url: typeof urlRaw === "string" ? urlRaw : undefined,
-    tags: tags.length > 0 ? [...new Set(tags)] : undefined,
+    tags: normalizeList(tags),
+    owners: normalizeList(owners),
+    domain: domain?.toLowerCase(),
+    glossaryTerms: normalizeList(glossaryTerms),
   };
 }
 
