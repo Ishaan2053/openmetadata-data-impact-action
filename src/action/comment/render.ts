@@ -43,6 +43,15 @@ function renderAssetRows(summary: ImpactSummary, config: ActionConfig): string[]
         : "";
       rows.push(`- ${linkOrName} (${asset.fqn})`);
       rows.push(`  - Reason: ${reason}${criticalTag}`);
+      if (asset.owners && asset.owners.length > 0) {
+        rows.push(`  - Owners: ${asset.owners.join(", ")}`);
+      }
+      if (asset.domain) {
+        rows.push(`  - Domain: ${asset.domain}`);
+      }
+      if (asset.glossaryTerms && asset.glossaryTerms.length > 0) {
+        rows.push(`  - Glossary terms: ${asset.glossaryTerms.join(", ")}`);
+      }
     }
 
     if (assets.length > config.maxCommentAssets) {

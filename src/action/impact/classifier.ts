@@ -1,4 +1,12 @@
-import { AssetType, CanonicalEntity, ImpactSummary, ImpactedAsset, LineageResult, RiskLevel } from "../types";
+import {
+  AssetType,
+  CanonicalEntity,
+  ImpactSummary,
+  ImpactedAsset,
+  LineageResult,
+  RiskLevel,
+  RiskThresholds,
+} from "../types";
 
 const ORDERED_TYPES: AssetType[] = [
   "dashboard",
@@ -42,6 +50,7 @@ function computeRisk(
   warnings: string[],
   criticalTags: string[],
   lowConfidenceEntityCount: number,
+  thresholds: RiskThresholds,
 ): RiskLevel {
   const dashboardCount = byType.dashboard.length;
   const pipelineCount = byType.pipeline.length;
@@ -53,12 +62,12 @@ function computeRisk(
   }
 
   if (
-    dashboardCount >= 5 ||
-    pipelineCount >= 4 ||
-    reportCount >= 8 ||
-    total >= 20 ||
-    (warnings.length >= 3 && total >= 8) ||
-    lowConfidenceEntityCount >= 10
+    dashboardCount >= thresholds.dashboardHigh ||
+    pipelineCount >= thresholds.pipelineHigh ||
+    reportCount >= thresholds.reportHigh ||
+    total >= thresholds.totalHigh ||
+    (warnings.length >= thresholds.warningCountHigh && total >= thresholds.warningMinAssetsHigh) ||
+    lowConfidenceEntityCount >= thresholds.lowConfidenceHigh
   ) {
     return "high";
   }
@@ -90,7 +99,22 @@ function buildSuggestions(risk: RiskLevel, warnings: string[], byType: Record<As
     suggestions.push("Check pipeline freshness and SLA alerts for impacted transformations.");
   }
 
+  const assetsWithoutOwners = Object.values(byType)
+    .flat()
+    .filter((asset) => !asset.owners || asset.owners.length === 0).length;
+  if (assetsWithoutOwners > 0) {
+    suggestions.push("Add owner metadata to impacted assets in OpenMetadata for faster incident routing.");
+  }
+
   return [...new Set(suggestions)];
+}
+
+function mergeLists(existing: string[] | undefined, incoming: string[] | undefined): string[] | undefined {
+  const merged = [...(existing ?? []), ...(incoming ?? [])];
+  if (merged.length === 0) {
+    return undefined;
+  }
+  return [...new Set(merged)];
 }
 
 export function computeImpactSummary(input: {
@@ -99,6 +123,7 @@ export function computeImpactSummary(input: {
   warnings: string[];
   lowConfidenceEntityCount: number;
   criticalAssetTags: string[];
+  riskThresholds: RiskThresholds;
   truncated: boolean;
   whatChanged?: string[];
   aiSummary?: string;
@@ -121,12 +146,24 @@ export function computeImpactSummary(input: {
           url: node.url,
           reasons: [reason],
           tags: node.tags,
+          owners: node.owners,
+          domain: node.domain,
+          glossaryTerms: node.glossaryTerms,
         });
         continue;
       }
 
       if (!existing.reasons.includes(reason)) {
         existing.reasons.push(reason);
+      }
+      if (!existing.url && node.url) {
+        existing.url = node.url;
+      }
+      existing.tags = mergeLists(existing.tags, node.tags);
+      existing.owners = mergeLists(existing.owners, node.owners);
+      existing.glossaryTerms = mergeLists(existing.glossaryTerms, node.glossaryTerms);
+      if (!existing.domain && node.domain) {
+        existing.domain = node.domain;
       }
       impactedMap.set(key, existing);
     }
@@ -145,6 +182,7 @@ export function computeImpactSummary(input: {
     input.warnings,
     input.criticalAssetTags,
     input.lowConfidenceEntityCount,
+    input.riskThresholds,
   );
   const impactedAssetCount = Object.values(byType).reduce((sum, assets) => sum + assets.length, 0);
 
