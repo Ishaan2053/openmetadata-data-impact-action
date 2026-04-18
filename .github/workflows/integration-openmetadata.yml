@@ -1,0 +1,69 @@
+name: OpenMetadata Integration
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Check integration secret availability
+        id: preflight
+        shell: bash
+        env:
+          OM_INTEGRATION_ENDPOINT: ${{ secrets.OM_INTEGRATION_ENDPOINT }}
+          OM_INTEGRATION_TOKEN: ${{ secrets.OM_INTEGRATION_TOKEN }}
+          OM_INTEGRATION_ENTITY_FQN: ${{ secrets.OM_INTEGRATION_ENTITY_FQN }}
+        run: |
+          missing=0
+          if [[ -z "${OM_INTEGRATION_ENDPOINT}" ]]; then
+            echo "::notice::OM_INTEGRATION_ENDPOINT is not configured."
+            missing=1
+          fi
+          if [[ -z "${OM_INTEGRATION_TOKEN}" ]]; then
+            echo "::notice::OM_INTEGRATION_TOKEN is not configured."
+            missing=1
+          fi
+          if [[ -z "${OM_INTEGRATION_ENTITY_FQN}" ]]; then
+            echo "::notice::OM_INTEGRATION_ENTITY_FQN is not configured."
+            missing=1
+          fi
+
+          if [[ "${missing}" -eq 1 ]]; then
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should-run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run OpenMetadata integration test
+        if: steps.preflight.outputs.should-run == 'true'
+        env:
+          OM_INTEGRATION_ENDPOINT: ${{ secrets.OM_INTEGRATION_ENDPOINT }}
+          OM_INTEGRATION_TOKEN: ${{ secrets.OM_INTEGRATION_TOKEN }}
+          OM_INTEGRATION_ENTITY_FQN: ${{ secrets.OM_INTEGRATION_ENTITY_FQN }}
+        run: node --test test/openmetadata-integration.test.js

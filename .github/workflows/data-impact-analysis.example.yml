@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Run OpenMetadata impact analysis
+        id: impact
         uses: ./. 
         with:
           openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
@@ -45,3 +46,11 @@ jobs:
             tier1
             critical
           ai-summary-enabled: "false"
+          impact-json-file: .artifacts/impact-analysis.json
+
+      - name: Upload structured impact JSON
+        if: steps.impact.outputs.impact-json-file != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: impact-analysis
+          path: ${{ steps.impact.outputs.impact-json-file }}
