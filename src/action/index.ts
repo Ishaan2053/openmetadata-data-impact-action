@@ -140,6 +140,7 @@ async function run(): Promise<void> {
       warnings: [...guardrailWarnings, ...extracted.warnings, ...traversal.warnings],
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
       criticalAssetTags: config.criticalAssetTags,
+      riskThresholds: config.riskThresholds,
       truncated,
       whatChanged,
     });
@@ -165,6 +166,7 @@ async function run(): Promise<void> {
       warnings: finalWarnings,
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
       criticalAssetTags: config.criticalAssetTags,
+      riskThresholds: config.riskThresholds,
       truncated,
       whatChanged,
       ...(ai.summary ? { aiSummary: ai.summary } : {}),

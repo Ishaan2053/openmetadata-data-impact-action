@@ -14,6 +14,16 @@ export type RiskLevel = "high" | "medium" | "low";
 
 export type LineageProviderMode = "api" | "mcp" | "auto";
 
+export interface RiskThresholds {
+  dashboardHigh: number;
+  pipelineHigh: number;
+  reportHigh: number;
+  totalHigh: number;
+  warningCountHigh: number;
+  warningMinAssetsHigh: number;
+  lowConfidenceHigh: number;
+}
+
 export interface ActionConfig {
   openMetadataEndpoint: string;
   authToken: string;
@@ -33,6 +43,7 @@ export interface ActionConfig {
   aiSummaryEndpoint?: string | undefined;
   strictSqlParse: boolean;
   criticalAssetTags: string[];
+  riskThresholds: RiskThresholds;
   allowedEndpointHosts: string[];
   allowInsecureLocalEndpoints: boolean;
   maxCommentAssets: number;
@@ -84,6 +95,9 @@ export interface LineageNode {
   url?: string | undefined;
   upstreamFrom?: string | undefined;
   tags?: string[] | undefined;
+  owners?: string[] | undefined;
+  domain?: string | undefined;
+  glossaryTerms?: string[] | undefined;
 }
 
 export interface LineageResult {
@@ -101,6 +115,9 @@ export interface ImpactedAsset {
   url?: string | undefined;
   reasons: string[];
   tags?: string[] | undefined;
+  owners?: string[] | undefined;
+  domain?: string | undefined;
+  glossaryTerms?: string[] | undefined;
 }
 
 export interface ImpactSummary {

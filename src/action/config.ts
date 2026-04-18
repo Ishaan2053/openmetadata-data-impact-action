@@ -3,9 +3,10 @@ import {
   ActionConfig,
   ConfigurationError,
   LineageProviderMode,
+  RiskThresholds,
 } from "./types";
 
-const DEFAULT_PATTERNS = [
+export const DEFAULT_PATTERNS = [
   "**/*.sql",
   "**/models/**/*.sql",
   "**/models/**/*.yml",
@@ -16,7 +17,17 @@ const DEFAULT_PATTERNS = [
   "**/dbt_project.yaml",
 ];
 
-const DEFAULT_CRITICAL_TAGS = ["tier1", "critical", "business_critical"];
+export const DEFAULT_CRITICAL_TAGS = ["tier1", "critical", "business_critical"];
+
+export const DEFAULT_RISK_THRESHOLDS: RiskThresholds = {
+  dashboardHigh: 5,
+  pipelineHigh: 4,
+  reportHigh: 8,
+  totalHigh: 20,
+  warningCountHigh: 3,
+  warningMinAssetsHigh: 8,
+  lowConfidenceHigh: 10,
+};
 
 function parsePositiveInt(name: string, raw: string): number {
   const value = Number.parseInt(raw, 10);
@@ -92,6 +103,39 @@ function parseProviderMode(raw: string): LineageProviderMode {
   );
 }
 
+function parseRiskThresholds(): RiskThresholds {
+  return {
+    dashboardHigh: parsePositiveInt(
+      "risk-high-dashboard-count",
+      core.getInput("risk-high-dashboard-count") || String(DEFAULT_RISK_THRESHOLDS.dashboardHigh),
+    ),
+    pipelineHigh: parsePositiveInt(
+      "risk-high-pipeline-count",
+      core.getInput("risk-high-pipeline-count") || String(DEFAULT_RISK_THRESHOLDS.pipelineHigh),
+    ),
+    reportHigh: parsePositiveInt(
+      "risk-high-report-count",
+      core.getInput("risk-high-report-count") || String(DEFAULT_RISK_THRESHOLDS.reportHigh),
+    ),
+    totalHigh: parsePositiveInt(
+      "risk-high-total-assets",
+      core.getInput("risk-high-total-assets") || String(DEFAULT_RISK_THRESHOLDS.totalHigh),
+    ),
+    warningCountHigh: parsePositiveInt(
+      "risk-high-warning-count",
+      core.getInput("risk-high-warning-count") || String(DEFAULT_RISK_THRESHOLDS.warningCountHigh),
+    ),
+    warningMinAssetsHigh: parsePositiveInt(
+      "risk-high-warning-min-assets",
+      core.getInput("risk-high-warning-min-assets") || String(DEFAULT_RISK_THRESHOLDS.warningMinAssetsHigh),
+    ),
+    lowConfidenceHigh: parsePositiveInt(
+      "risk-high-low-confidence-count",
+      core.getInput("risk-high-low-confidence-count") || String(DEFAULT_RISK_THRESHOLDS.lowConfidenceHigh),
+    ),
+  };
+}
+
 export function getConfig(): ActionConfig {
   const openMetadataEndpoint = core.getInput("openmetadata-endpoint", {
     required: true,
@@ -149,6 +193,7 @@ export function getConfig(): ActionConfig {
       criticalAssetTagsRaw.length > 0
         ? criticalAssetTagsRaw
         : DEFAULT_CRITICAL_TAGS.map((tag) => tag.toLowerCase()),
+    riskThresholds: parseRiskThresholds(),
     allowedEndpointHosts,
     allowInsecureLocalEndpoints,
     maxCommentAssets: parsePositiveInt(
