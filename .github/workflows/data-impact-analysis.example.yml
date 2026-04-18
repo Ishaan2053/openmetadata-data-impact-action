@@ -1,0 +1,44 @@
+name: Data Impact Analysis (Example)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: data-impact-analysis-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  analyze-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run OpenMetadata impact analysis
+        uses: ./. 
+        with:
+          openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
+          auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file-patterns: |
+            **/*.sql
+            **/models/**/*.sql
+            **/schema.yml
+            **/schema.yaml
+          max-lineage-depth: "3"
+          max-concurrency: "4"
+          max-tracked-files: "200"
+          max-entities: "500"
+          max-downstream-assets: "2000"
+          fail-on-missing-metadata: "false"
+          lineage-provider: "auto"
+          strict-sql-parse: "false"
+          critical-asset-tags: |
+            tier1
+            critical
+          ai-summary-enabled: "false"
