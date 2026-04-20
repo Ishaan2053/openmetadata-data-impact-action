@@ -51,6 +51,24 @@ interface CompactImpactJson {
   }>;
 }
 
+interface PrimaryOutputs {
+  riskLevel: string;
+  impactedAssetCount: number;
+  warningCount: number;
+  changedEntityCount: number;
+  lowConfidenceEntityCount: number;
+  truncated: boolean;
+}
+
+function setPrimaryOutputs(outputs: PrimaryOutputs): void {
+  core.setOutput("risk-level", outputs.riskLevel);
+  core.setOutput("impacted-asset-count", String(outputs.impactedAssetCount));
+  core.setOutput("warning-count", String(outputs.warningCount));
+  core.setOutput("changed-entity-count", String(outputs.changedEntityCount));
+  core.setOutput("low-confidence-entity-count", String(outputs.lowConfidenceEntityCount));
+  core.setOutput("truncated-analysis", String(outputs.truncated));
+}
+
 async function writeJobSummary(markdown: string): Promise<void> {
   const prepared = truncateForStepSummary(markdown);
   if (prepared.truncated) {
@@ -170,7 +188,7 @@ function createProvider(config: ReturnType<typeof getConfig>): {
   return { provider: new OpenMetadataLineageProvider(config) };
 }
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   let config: ReturnType<typeof getConfig> | undefined;
 
   try {
@@ -207,12 +225,14 @@ async function run(): Promise<void> {
 
     if (trackedFiles.length === 0) {
       logInfo("No tracked files changed in this pull request. Skipping impact analysis.");
-      core.setOutput("risk-level", "low");
-      core.setOutput("impacted-asset-count", "0");
-      core.setOutput("warning-count", "0");
-      core.setOutput("changed-entity-count", "0");
-      core.setOutput("low-confidence-entity-count", "0");
-      core.setOutput("truncated-analysis", "false");
+      setPrimaryOutputs({
+        riskLevel: "low",
+        impactedAssetCount: 0,
+        warningCount: 0,
+        changedEntityCount: 0,
+        lowConfidenceEntityCount: 0,
+        truncated: false,
+      });
 
       const compactPayload = buildCompactImpactJson({
         analysisStatus: "skipped",
@@ -267,12 +287,14 @@ async function run(): Promise<void> {
       ].join("\n");
 
       await upsertImpactComment(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
-      core.setOutput("risk-level", "low");
-      core.setOutput("impacted-asset-count", "0");
-      core.setOutput("warning-count", String(extracted.warnings.length + guardrailWarnings.length));
-      core.setOutput("changed-entity-count", "0");
-      core.setOutput("low-confidence-entity-count", String(extracted.lowConfidenceEntityCount));
-      core.setOutput("truncated-analysis", String(truncated));
+      setPrimaryOutputs({
+        riskLevel: "low",
+        impactedAssetCount: 0,
+        warningCount: extracted.warnings.length + guardrailWarnings.length,
+        changedEntityCount: 0,
+        lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
+        truncated,
+      });
 
       const branchWarnings = [...guardrailWarnings, ...extracted.warnings];
       const branchStatus = computeAnalysisStatus(branchWarnings, truncated);
@@ -360,12 +382,14 @@ async function run(): Promise<void> {
     });
     await writeJobSummary(detailedReport);
 
-    core.setOutput("risk-level", finalSummary.riskLevel);
-    core.setOutput("impacted-asset-count", String(finalSummary.impactedAssetCount));
-    core.setOutput("warning-count", String(finalSummary.warnings.length));
-    core.setOutput("changed-entity-count", String(finalSummary.changedEntityCount));
-    core.setOutput("low-confidence-entity-count", String(finalSummary.lowConfidenceEntityCount));
-    core.setOutput("truncated-analysis", String(finalSummary.truncated));
+    setPrimaryOutputs({
+      riskLevel: finalSummary.riskLevel,
+      impactedAssetCount: finalSummary.impactedAssetCount,
+      warningCount: finalSummary.warnings.length,
+      changedEntityCount: finalSummary.changedEntityCount,
+      lowConfidenceEntityCount: finalSummary.lowConfidenceEntityCount,
+      truncated: finalSummary.truncated,
+    });
 
     const analysisStatus = computeAnalysisStatus(finalSummary.warnings, finalSummary.truncated);
     const compactPayload = buildCompactImpactJson({
@@ -390,6 +414,15 @@ async function run(): Promise<void> {
     );
   } catch (error) {
     logError(`Impact analysis failed: ${String(error)}`);
+    setPrimaryOutputs({
+      riskLevel: "low",
+      impactedAssetCount: 0,
+      warningCount: 0,
+      changedEntityCount: 0,
+      lowConfidenceEntityCount: 0,
+      truncated: false,
+    });
+
     core.setOutput("analysis-status", "failed");
     core.setOutput("warning-code-counts", "{}");
     core.setOutput(
@@ -420,4 +453,6 @@ async function run(): Promise<void> {
   }
 }
 
-void run();
+if (require.main === module) {
+  void run();
+}

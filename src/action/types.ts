@@ -55,6 +55,9 @@ export interface ChangedFile {
   status: "added" | "modified" | "removed" | "renamed";
   previousPath?: string | undefined;
   patch?: string | undefined;
+  additions?: number | undefined;
+  deletions?: number | undefined;
+  changes?: number | undefined;
   content?: string | undefined;
 }
 

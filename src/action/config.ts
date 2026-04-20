@@ -37,10 +37,24 @@ function parsePositiveInt(name: string, raw: string): number {
   return value;
 }
 
+function parseNonNegativeInt(name: string, raw: string): number {
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || value < 0) {
+    throw new ConfigurationError(`${name} must be a non-negative integer. Received: ${raw}`);
+  }
+  return value;
+}
+
 function parseBoundedPositiveInt(name: string, raw: string, min: number, max: number): number {
   const value = parsePositiveInt(name, raw);
   if (value < min || value > max) {
-    throw new ConfigurationError(`${name} must be between ${min} and ${max}. Received: ${raw}`);
+    const suffix =
+      name === "max-lineage-depth"
+        ? " OpenMetadata lineage API supports a maximum depth of 3 per request."
+        : "";
+    throw new ConfigurationError(
+      `${name} must be between ${min} and ${max}. Received: ${raw}.${suffix}`,
+    );
   }
   return value;
 }
@@ -196,7 +210,7 @@ export function getConfig(): ActionConfig {
       "request-timeout-ms",
       core.getInput("request-timeout-ms") || "15000",
     ),
-    maxRetries: parsePositiveInt("max-retries", core.getInput("max-retries") || "3"),
+    maxRetries: parseNonNegativeInt("max-retries", core.getInput("max-retries") || "3"),
     failOnMissingMetadata: core.getBooleanInput("fail-on-missing-metadata"),
     aiSummaryEnabled: core.getBooleanInput("ai-summary-enabled"),
     strictSqlParse: core.getBooleanInput("strict-sql-parse"),
