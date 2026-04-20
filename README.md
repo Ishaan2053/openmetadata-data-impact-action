@@ -15,7 +15,7 @@ Analyze SQL/dbt/schema changes in pull requests, traverse downstream lineage fro
 
 - Detects tracked file changes from the PR diff.
 - Extracts changed entities from SQL, dbt, and schema files.
-- Resolves downstream lineage using OpenMetadata API (or MCP/auto mode).
+- Resolves downstream lineage using documented OpenMetadata lineage endpoints (or MCP/auto mode).
 - Computes risk (`low|medium|high`) using blast-radius and critical-tag rules.
 - Publishes:
   - PR comment with summary + impacted assets + warnings + suggestions
@@ -76,7 +76,7 @@ jobs:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     strict-sql-parse: "true"
     fail-on-missing-metadata: "true"
-    max-lineage-depth: "4"
+    max-lineage-depth: "3"
 ```
 
 ### 3) Host allowlist and critical tags
@@ -108,6 +108,10 @@ The action exposes the following outputs:
 | `changed-entity-count` | Number of extracted changed entities |
 | `low-confidence-entity-count` | Number of low-confidence extracted entities |
 | `truncated-analysis` | `true` if guardrails truncated analysis |
+| `analysis-status` | Overall run status (`success`, `partial`, `degraded`, `skipped`, `failed`) |
+| `warning-code-counts` | JSON object mapping warning taxonomy codes to counts |
+| `impact-json` | Compact machine-readable JSON payload for automation |
+| `impact-json-file` | Path to full JSON payload when `impact-json-file` input is configured |
 
 ### Output usage example
 
@@ -137,7 +141,7 @@ The action exposes the following outputs:
 | `file-patterns` | no | See defaults in `action.yml` | Comma/newline glob patterns for tracked files |
 | `lineage-provider` | no | `auto` | `api`, `mcp`, or `auto` |
 | `mcp-endpoint` | no | - | Optional HTTP endpoint for MCP lineage adapter |
-| `max-lineage-depth` | no | `3` | Maximum downstream traversal depth |
+| `max-lineage-depth` | no | `3` | Maximum downstream traversal depth (1-3; OpenMetadata API limit) |
 | `max-concurrency` | no | `4` | Max concurrent lineage lookups |
 | `max-tracked-files` | no | `200` | Max tracked files analyzed per PR |
 | `max-entities` | no | `500` | Max extracted entities analyzed |
@@ -147,6 +151,7 @@ The action exposes the following outputs:
 | `fail-on-missing-metadata` | no | `false` | Fail run if referenced entities are missing in metadata |
 | `ai-summary-enabled` | no | `false` | Enable optional AI summary layer |
 | `ai-summary-endpoint` | no | - | Optional endpoint for external AI summary |
+| `impact-json-file` | no | - | Optional path to write full JSON payload (for artifact upload) |
 | `strict-sql-parse` | no | `false` | Stricter SQL parsing mode |
 | `critical-asset-tags` | no | `tier1,critical,business_critical` | Critical tags that increase risk |
 | `risk-high-dashboard-count` | no | `5` | High-risk threshold for impacted dashboards |
@@ -184,6 +189,34 @@ The action supports/uses these environment variables:
 ### Job summary (markdown)
 
 - Full impact report written to Actions job summary for quick triage.
+- When report content exceeds GitHub step summary size limits, the summary is truncated with a notice and full details remain in PR comment + outputs.
+
+### Machine outputs
+
+- `analysis-status` and `warning-code-counts` provide stable automation signals.
+- Warning strings are taxonomy-prefixed (for example, `[METADATA_MISSING]`, `[RATE_LIMITED]`, `[NETWORK_ERROR]`).
+- `impact-json` provides a compact structured payload suitable for follow-up workflow steps.
+- If `impact-json-file` is configured, the action writes a full payload to disk and sets `impact-json-file` output.
+
+Example artifact upload:
+
+```yaml
+- name: Analyze impact
+  id: impact
+  uses: Ishaan2053/openmetadata-github-action@v1
+  with:
+    openmetadata-endpoint: ${{ secrets.OPENMETADATA_ENDPOINT }}
+    auth-token: ${{ secrets.OPENMETADATA_TOKEN }}
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    impact-json-file: .artifacts/impact-analysis.json
+
+- name: Upload impact JSON artifact
+  if: steps.impact.outputs.impact-json-file != ''
+  uses: actions/upload-artifact@v4
+  with:
+    name: impact-analysis
+    path: ${{ steps.impact.outputs.impact-json-file }}
+```
 
 ## Security and operational behavior
 
