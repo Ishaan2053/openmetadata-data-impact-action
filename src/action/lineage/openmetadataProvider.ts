@@ -190,8 +190,6 @@ function buildLineageEndpoints(base: string, fqn: string, depth: number): string
   const encoded = encodeURIComponent(fqn);
   return [
     `${base}/api/v1/lineage/table/name/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
-    `${base}/api/v1/lineage/table/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
-    `${base}/api/v1/lineage?fqn=${encoded}&entityType=table&upstreamDepth=0&downstreamDepth=${depth}`,
   ];
 }
 

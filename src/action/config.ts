@@ -17,6 +17,7 @@ export const DEFAULT_PATTERNS = [
 ];
 
 export const DEFAULT_CRITICAL_TAGS = ["tier1", "critical", "business_critical"];
+export const OPENMETADATA_MAX_LINEAGE_DEPTH = 3;
 
 export const DEFAULT_RISK_THRESHOLDS: RiskThresholds = {
   dashboardHigh: 5,
@@ -32,6 +33,14 @@ function parsePositiveInt(name: string, raw: string): number {
   const value = Number.parseInt(raw, 10);
   if (Number.isNaN(value) || value <= 0) {
     throw new ConfigurationError(`${name} must be a positive integer. Received: ${raw}`);
+  }
+  return value;
+}
+
+function parseBoundedPositiveInt(name: string, raw: string, min: number, max: number): number {
+  const value = parsePositiveInt(name, raw);
+  if (value < min || value > max) {
+    throw new ConfigurationError(`${name} must be between ${min} and ${max}. Received: ${raw}`);
   }
   return value;
 }
@@ -161,9 +170,11 @@ export function getConfig(): ActionConfig {
     githubToken,
     filePatterns,
     lineageProvider,
-    maxLineageDepth: parsePositiveInt(
+    maxLineageDepth: parseBoundedPositiveInt(
       "max-lineage-depth",
       core.getInput("max-lineage-depth") || "3",
+      1,
+      OPENMETADATA_MAX_LINEAGE_DEPTH,
     ),
     maxConcurrency: parsePositiveInt(
       "max-concurrency",

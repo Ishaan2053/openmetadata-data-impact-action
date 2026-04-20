@@ -12,6 +12,7 @@ import { FallbackLineageProvider } from "./lineage/fallbackProvider";
 import { traverseDownstream } from "./lineage/traversal";
 import { computeImpactSummary } from "./impact/classifier";
 import { renderDetailedImpactReport, renderImpactComment } from "./comment/render";
+import { truncateForStepSummary } from "./comment/summary";
 import { upsertImpactComment } from "./comment/publish";
 import { buildOptionalAiSummary } from "./impact/aiSummary";
 import { ImpactSummary } from "./types";
@@ -51,8 +52,12 @@ interface CompactImpactJson {
 }
 
 async function writeJobSummary(markdown: string): Promise<void> {
+  const prepared = truncateForStepSummary(markdown);
+  if (prepared.truncated) {
+    logInfo("Job summary exceeded GitHub step summary limit and was truncated.");
+  }
   await core.summary.clear();
-  await core.summary.addRaw(markdown, true).write();
+  await core.summary.addRaw(prepared.markdown, true).write();
 }
 
 async function writeImpactJsonFile(filePath: string, payload: unknown): Promise<string> {
