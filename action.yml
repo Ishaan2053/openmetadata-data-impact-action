@@ -30,7 +30,7 @@ inputs:
     description: Optional HTTP endpoint for MCP lineage adapter
     required: false
   max-lineage-depth:
-    description: Maximum downstream traversal depth
+    description: Maximum downstream traversal depth (1-3, OpenMetadata API limit)
     required: false
     default: "3"
   max-concurrency:
