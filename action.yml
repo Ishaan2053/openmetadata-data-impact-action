@@ -54,7 +54,7 @@ inputs:
     required: false
     default: "15000"
   max-retries:
-    description: Maximum retries for transient API failures
+    description: Maximum retries for transient API failures (0 disables retries)
     required: false
     default: "3"
   fail-on-missing-metadata:

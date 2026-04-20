@@ -147,7 +147,7 @@ The action exposes the following outputs:
 | `max-entities` | no | `500` | Max extracted entities analyzed |
 | `max-downstream-assets` | no | `2000` | Max downstream assets before truncation |
 | `request-timeout-ms` | no | `15000` | HTTP timeout in ms |
-| `max-retries` | no | `3` | Max retries for transient API errors |
+| `max-retries` | no | `3` | Max retries for transient API errors (`0` disables retries) |
 | `fail-on-missing-metadata` | no | `false` | Fail run if referenced entities are missing in metadata |
 | `ai-summary-enabled` | no | `false` | Enable optional AI summary layer |
 | `ai-summary-endpoint` | no | - | Optional endpoint for external AI summary |
@@ -194,7 +194,7 @@ The action supports/uses these environment variables:
 ### Machine outputs
 
 - `analysis-status` and `warning-code-counts` provide stable automation signals.
-- Warning strings are taxonomy-prefixed (for example, `[METADATA_MISSING]`, `[RATE_LIMITED]`, `[NETWORK_ERROR]`).
+- Warning strings are taxonomy-prefixed (for example, `[METADATA_MISSING]`, `[RATE_LIMITED]`, `[NETWORK_ERROR]`, `[COMMENT_PUBLISH_FAILED]`).
 - `impact-json` provides a compact structured payload suitable for follow-up workflow steps.
 - If `impact-json-file` is configured, the action writes a full payload to disk and sets `impact-json-file` output.
 
