@@ -22,6 +22,19 @@ function truncateSnippet(value: string, maxLength: number = 90): string {
   return `${compact.slice(0, maxLength - 3)}...`;
 }
 
+function estimatePatchChangeCount(patch: string): number {
+  let count = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+      continue;
+    }
+    if (line.startsWith("+") || line.startsWith("-")) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function extractPatchLines(patch: string): { added: string[]; removed: string[] } {
   const added: string[] = [];
   const removed: string[] = [];
@@ -73,6 +86,9 @@ export class DiffReader {
       filename: string;
       status: string;
       previous_filename?: string;
+      additions?: number;
+      deletions?: number;
+      changes?: number;
       patch?: string;
     }>;
 
@@ -80,6 +96,9 @@ export class DiffReader {
       path: file.filename,
       status: mapStatus(file.status),
       previousPath: file.previous_filename,
+      additions: file.additions,
+      deletions: file.deletions,
+      changes: file.changes,
       patch: file.patch,
     }));
 
@@ -158,7 +177,15 @@ export class DiffReader {
         continue;
       }
 
-      const shouldHydrate = !file.patch || file.patch.length < 300;
+      const patch = file.patch;
+      const patchChangeCount = patch ? estimatePatchChangeCount(patch) : 0;
+      const reportedChanges = file.changes ?? 0;
+
+      const shouldHydrate =
+        !patch ||
+        patch.length < 300 ||
+        (reportedChanges > 0 && patchChangeCount > 0 && patchChangeCount < reportedChanges);
+
       if (!shouldHydrate) {
         hydrated.push(file);
         continue;

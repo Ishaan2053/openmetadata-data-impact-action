@@ -20,6 +20,49 @@ const ORDER: AssetType[] = [
   "other",
 ];
 
+function neutralizeMentions(value: string): string {
+  return value.replace(/@/g, "&#64;");
+}
+
+function neutralizeDangerousSchemes(value: string): string {
+  return value
+    .replace(/\bjavascript:/gi, "javascript&#58;")
+    .replace(/\bvbscript:/gi, "vbscript&#58;")
+    .replace(/\bdata:/gi, "data&#58;");
+}
+
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/([\\`*_{}\[\]()|<>])/g, "\\$1");
+}
+
+function sanitizeText(value: string): string {
+  const flattened = value.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+  return escapeMarkdownInline(neutralizeDangerousSchemes(neutralizeMentions(flattened)));
+}
+
+function sanitizeMultiline(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => sanitizeText(line))
+    .join("\n");
+}
+
+function safeHttpUrl(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function capitalizeRisk(risk: ImpactSummary["riskLevel"]): string {
   return risk.charAt(0).toUpperCase() + risk.slice(1);
 }
@@ -36,21 +79,25 @@ function renderAssetRows(summary: ImpactSummary, config: ActionConfig): string[]
     rows.push(`### ${DISPLAY_LABELS[type]} (${assets.length})`);
     const slice = assets.slice(0, config.maxCommentAssets);
     for (const asset of slice) {
-      const linkOrName = asset.url ? `[${asset.name}](${asset.url})` : asset.name;
-      const reason = asset.reasons[0] ?? "Downstream dependency";
+      const safeName = sanitizeText(asset.name);
+      const safeUrl = safeHttpUrl(asset.url);
+      const linkOrName = safeUrl ? `[${safeName}](${safeUrl})` : safeName;
+      const reason = sanitizeText(asset.reasons[0] ?? "Downstream dependency");
       const criticalTag = (asset.tags ?? []).some((tag) => config.criticalAssetTags.includes(tag))
         ? " [critical]"
         : "";
-      rows.push(`- ${linkOrName} (${asset.fqn})`);
+      rows.push(`- ${linkOrName} (${sanitizeText(asset.fqn)})`);
       rows.push(`  - Reason: ${reason}${criticalTag}`);
       if (asset.owners && asset.owners.length > 0) {
-        rows.push(`  - Owners: ${asset.owners.join(", ")}`);
+        rows.push(`  - Owners: ${asset.owners.map((owner) => sanitizeText(owner)).join(", ")}`);
       }
       if (asset.domain) {
-        rows.push(`  - Domain: ${asset.domain}`);
+        rows.push(`  - Domain: ${sanitizeText(asset.domain)}`);
       }
       if (asset.glossaryTerms && asset.glossaryTerms.length > 0) {
-        rows.push(`  - Glossary terms: ${asset.glossaryTerms.join(", ")}`);
+        rows.push(
+          `  - Glossary terms: ${asset.glossaryTerms.map((term) => sanitizeText(term)).join(", ")}`,
+        );
       }
     }
 
@@ -75,7 +122,7 @@ export function renderImpactComment(summary: ImpactSummary, config: ActionConfig
   if (whatChanged.length > 0) {
     lines.push("### What Changed");
     for (const item of whatChanged) {
-      lines.push(`- ${item}`);
+      lines.push(`- ${sanitizeText(item)}`);
     }
     lines.push("");
   }
@@ -91,7 +138,7 @@ export function renderImpactComment(summary: ImpactSummary, config: ActionConfig
 
   if (summary.aiSummary) {
     lines.push("### Optional AI Summary");
-    lines.push(summary.aiSummary);
+    lines.push(sanitizeMultiline(summary.aiSummary));
     lines.push("");
   }
 
@@ -110,7 +157,7 @@ export function renderImpactComment(summary: ImpactSummary, config: ActionConfig
   if (summary.warnings.length > 0) {
     lines.push("### Warnings");
     for (const warning of summary.warnings) {
-      lines.push(`- ${warning}`);
+      lines.push(`- ${sanitizeText(warning)}`);
     }
     lines.push("");
   }
@@ -118,7 +165,7 @@ export function renderImpactComment(summary: ImpactSummary, config: ActionConfig
   if (summary.suggestions.length > 0) {
     lines.push("### Suggestions");
     for (const suggestion of summary.suggestions) {
-      lines.push(`- ${suggestion}`);
+      lines.push(`- ${sanitizeText(suggestion)}`);
     }
     lines.push("");
   }
@@ -138,7 +185,7 @@ export function renderDetailedImpactReport(summary: ImpactSummary, config: Actio
   if (whatChanged.length > 0) {
     lines.push("### What Changed");
     for (const item of whatChanged) {
-      lines.push(`- ${item}`);
+      lines.push(`- ${sanitizeText(item)}`);
     }
     lines.push("");
   }
@@ -163,7 +210,7 @@ export function renderDetailedImpactReport(summary: ImpactSummary, config: Actio
   if (summary.warnings.length > 0) {
     lines.push("### Full Warning List");
     for (const warning of summary.warnings) {
-      lines.push(`- ${warning}`);
+      lines.push(`- ${sanitizeText(warning)}`);
     }
     lines.push("");
   }
