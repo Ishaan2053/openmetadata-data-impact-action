@@ -42,6 +42,13 @@ test("computeImpactSummary marks risk high for critical tagged asset", () => {
       warningMinAssetsHigh: 8,
       lowConfidenceHigh: 10,
     },
+    riskWeighting: {
+      governance: 0,
+      usage: 0,
+      dataQuality: 0,
+      mediumThreshold: 6,
+      highThreshold: 12,
+    },
     truncated: false,
   });
 

@@ -42,6 +42,13 @@ function seedInput(overrides = {}) {
       warningMinAssetsHigh: 8,
       lowConfidenceHigh: 10,
     },
+    riskWeighting: {
+      governance: 0,
+      usage: 0,
+      dataQuality: 0,
+      mediumThreshold: 6,
+      highThreshold: 12,
+    },
     truncated: false,
     ...overrides,
   };
@@ -109,4 +116,71 @@ test("computeImpactSummary adds missing metadata suggestion only for coded taxon
       "Add or repair missing OpenMetadata entities to improve lineage coverage.",
     ),
   );
+});
+
+test("computeImpactSummary can escalate medium risk to high via weighted usage signals", () => {
+  const summary = computeImpactSummary(
+    seedInput({
+      riskThresholds: {
+        dashboardHigh: 50,
+        pipelineHigh: 50,
+        reportHigh: 50,
+        totalHigh: 500,
+        warningCountHigh: 50,
+        warningMinAssetsHigh: 50,
+        lowConfidenceHigh: 50,
+      },
+      riskWeighting: {
+        governance: 0,
+        usage: 2,
+        dataQuality: 0,
+        mediumThreshold: 4,
+        highThreshold: 4,
+      },
+    }),
+  );
+
+  assert.equal(summary.riskLevel, "high");
+});
+
+test("computeImpactSummary can escalate medium risk to high via weighted governance signals", () => {
+  const summary = computeImpactSummary(
+    seedInput({
+      lineageResults: [
+        {
+          sourceEntityFqn: "warehouse.analytics.orders",
+          nodes: [
+            {
+              id: "tbl-1",
+              fqn: "warehouse.analytics.orders_curated",
+              name: "orders_curated",
+              type: "table",
+              owners: [],
+            },
+          ],
+          partial: false,
+          warnings: [],
+        },
+      ],
+      warnings: [],
+      riskThresholds: {
+        dashboardHigh: 50,
+        pipelineHigh: 50,
+        reportHigh: 50,
+        totalHigh: 500,
+        warningCountHigh: 50,
+        warningMinAssetsHigh: 50,
+        lowConfidenceHigh: 50,
+      },
+      riskWeighting: {
+        governance: 2,
+        usage: 0,
+        dataQuality: 0,
+        mediumThreshold: 1,
+        highThreshold: 2,
+      },
+    }),
+  );
+
+  assert.equal(summary.riskLevel, "high");
 });

@@ -9,6 +9,7 @@ function createConfig(overrides = {}) {
     openMetadataEndpoint: "https://metadata.example.com",
     authToken: "token",
     githubToken: "ghs_test",
+    operatingMode: "balanced",
     filePatterns: ["**/*.sql"],
     lineageProvider: "api",
     maxLineageDepth: 3,
@@ -18,10 +19,28 @@ function createConfig(overrides = {}) {
     maxDownstreamAssets: 2000,
     requestTimeoutMs: 500,
     maxRetries: 2,
+    maxRetryWaitMs: 15000,
+    maxTotalRetryWaitMs: 60000,
     failOnMissingMetadata: false,
     aiSummaryEnabled: false,
     strictSqlParse: false,
     criticalAssetTags: ["critical"],
+    riskThresholds: {
+      dashboardHigh: 5,
+      pipelineHigh: 4,
+      reportHigh: 8,
+      totalHigh: 20,
+      warningCountHigh: 3,
+      warningMinAssetsHigh: 8,
+      lowConfidenceHigh: 10,
+    },
+    riskWeighting: {
+      governance: 0,
+      usage: 0,
+      dataQuality: 0,
+      mediumThreshold: 6,
+      highThreshold: 12,
+    },
     allowedEndpointHosts: [],
     allowInsecureLocalEndpoints: false,
     maxCommentAssets: 20,
@@ -231,5 +250,80 @@ test("OpenMetadata provider marks lineage unavailable on upstream failure withou
     assert.ok(!result.warnings.some((warning) => warning.includes("[METADATA_MISSING]")));
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+test("OpenMetadata provider caps retry wait and exposes observability counters", async () => {
+  const originalFetch = global.fetch;
+  const originalRandom = Math.random;
+
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return response(503, { message: "unavailable" }, { "retry-after": "20" });
+    }
+
+    return response(200, {
+      downstreamNodes: [
+        {
+          id: "dash-capped",
+          fullyQualifiedName: "bi.dashboard.capped",
+          name: "capped",
+          type: "dashboard",
+        },
+      ],
+    });
+  };
+  Math.random = () => 0;
+
+  try {
+    const provider = new OpenMetadataLineageProvider(
+      createConfig({
+        maxRetries: 1,
+        maxRetryWaitMs: 10,
+        maxTotalRetryWaitMs: 50,
+      }),
+    );
+
+    const result = await provider.getDownstream(createEntity(), 1);
+    const counters = provider.getObservabilityCounters();
+
+    assert.equal(result.partial, false);
+    assert.equal(calls, 2);
+    assert.ok(counters.retryAttempts >= 1);
+    assert.ok(counters.cappedRetryWaits >= 1);
+    assert.ok(counters.totalRetryWaitMs <= 50);
+  } finally {
+    global.fetch = originalFetch;
+    Math.random = originalRandom;
+  }
+});
+
+test("OpenMetadata provider returns retry budget exhausted warning when budget is depleted", async () => {
+  const originalFetch = global.fetch;
+  const originalRandom = Math.random;
+
+  global.fetch = async () => response(503, { message: "unavailable" }, { "retry-after": "10" });
+  Math.random = () => 0;
+
+  try {
+    const provider = new OpenMetadataLineageProvider(
+      createConfig({
+        maxRetries: 3,
+        maxRetryWaitMs: 500,
+        maxTotalRetryWaitMs: 0,
+      }),
+    );
+    const result = await provider.getDownstream(createEntity(), 1);
+    const counters = provider.getObservabilityCounters();
+
+    assert.equal(result.nodes.length, 0);
+    assert.equal(result.partial, true);
+    assert.ok(result.warnings.some((warning) => warning.includes("[RETRY_BUDGET_EXHAUSTED]")));
+    assert.ok(counters.retryBudgetExhaustions >= 1);
+  } finally {
+    global.fetch = originalFetch;
+    Math.random = originalRandom;
   }
 });

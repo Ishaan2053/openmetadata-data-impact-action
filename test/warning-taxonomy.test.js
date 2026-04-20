@@ -33,6 +33,11 @@ test("warning taxonomy extracts codes and counts correctly", () => {
 test("analysis status is degraded for transport failures", () => {
   const warnings = [formatWarning("NETWORK_ERROR", "Lineage request failed")];
   assert.equal(computeAnalysisStatus(warnings, false), "degraded");
+
+  const retryBudgetWarnings = [
+    formatWarning("RETRY_BUDGET_EXHAUSTED", "Retry budget exhausted before recovery"),
+  ];
+  assert.equal(computeAnalysisStatus(retryBudgetWarnings, false), "degraded");
 });
 
 test("analysis status is partial for metadata and truncation signals", () => {

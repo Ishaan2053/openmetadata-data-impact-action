@@ -109,3 +109,59 @@ test("getConfig rejects negative max-retries", () => {
     (error) => error instanceof ConfigurationError,
   );
 });
+
+test("getConfig applies strict-governance operating mode defaults", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "operating-mode": "strict-governance",
+  };
+
+  const config = withMockedInputs(inputMap, {}, () => getConfig());
+  assert.equal(config.operatingMode, "strict-governance");
+  assert.equal(config.strictSqlParse, true);
+  assert.equal(config.failOnMissingMetadata, true);
+});
+
+test("getConfig applies fast operating mode depth preset when defaults are unchanged", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "operating-mode": "fast",
+  };
+
+  const config = withMockedInputs(inputMap, {}, () => getConfig());
+  assert.equal(config.operatingMode, "fast");
+  assert.equal(config.maxLineageDepth, 2);
+});
+
+test("getConfig rejects weighted risk thresholds when high is below medium", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "risk-weight-medium-threshold": "10",
+    "risk-weight-high-threshold": "5",
+  };
+
+  assert.throws(
+    () => withMockedInputs(inputMap, {}, () => getConfig()),
+    (error) => error instanceof ConfigurationError,
+  );
+});
+
+test("getConfig rejects negative retry wait safeguard values", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "max-total-retry-wait-ms": "-1",
+  };
+
+  assert.throws(
+    () => withMockedInputs(inputMap, {}, () => getConfig()),
+    (error) => error instanceof ConfigurationError,
+  );
+});
