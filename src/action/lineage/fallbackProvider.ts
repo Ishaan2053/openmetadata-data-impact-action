@@ -63,4 +63,23 @@ export class FallbackLineageProvider implements LineageProvider {
       ])],
     };
   }
+
+  getObservabilityCounters(): Record<string, number> {
+    const merged: Record<string, number> = {};
+
+    const addCounters = (prefix: string, counters: Record<string, number> | undefined): void => {
+      if (!counters) {
+        return;
+      }
+
+      for (const [key, value] of Object.entries(counters)) {
+        merged[`${prefix}.${key}`] = value;
+      }
+    };
+
+    addCounters("primary", this.primary.getObservabilityCounters?.());
+    addCounters("fallback", this.fallback.getObservabilityCounters?.());
+
+    return merged;
+  }
 }

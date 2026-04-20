@@ -8,6 +8,15 @@ interface RequestResult {
   status: number;
   bodyText: string;
   headers?: Headers;
+  retryBudgetExhausted?: boolean;
+}
+
+interface RetryObservabilityCounters {
+  requests: number;
+  retryAttempts: number;
+  totalRetryWaitMs: number;
+  cappedRetryWaits: number;
+  retryBudgetExhaustions: number;
 }
 
 function delay(ms: number): Promise<void> {
@@ -316,6 +325,13 @@ function parseLineagePayload(payload: unknown, sourceEntityFqn: string): {
 export class OpenMetadataLineageProvider implements LineageProvider {
   readonly name = "openmetadata-api";
   private readonly cache = new Map<string, Promise<LineageResult>>();
+  private readonly retryObservability: RetryObservabilityCounters = {
+    requests: 0,
+    retryAttempts: 0,
+    totalRetryWaitMs: 0,
+    cappedRetryWaits: 0,
+    retryBudgetExhaustions: 0,
+  };
 
   constructor(private readonly config: ActionConfig) {}
 
@@ -337,6 +353,12 @@ export class OpenMetadataLineageProvider implements LineageProvider {
     }
   }
 
+  getObservabilityCounters(): Record<string, number> {
+    return {
+      ...this.retryObservability,
+    };
+  }
+
   private async getDownstreamUncached(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
     const warnings: string[] = [];
     const candidates = buildFqnCandidates(entity);
@@ -356,6 +378,16 @@ export class OpenMetadataLineageProvider implements LineageProvider {
 
         if (!response.ok) {
           sawLookupFailure = true;
+          if (response.retryBudgetExhausted) {
+            const warning = formatWarning(
+              "RETRY_BUDGET_EXHAUSTED",
+              `Retry wait budget exhausted before lineage request could recover for ${candidate}.`,
+            );
+            warnings.push(warning);
+            logWarning(warning);
+            continue;
+          }
+
           const warning = formatWarning(
             warningCodeForStatus(response.status),
             `Lineage request failed (${response.status}) for ${candidate}.`,
@@ -417,6 +449,32 @@ export class OpenMetadataLineageProvider implements LineageProvider {
   private async requestWithRetry(url: string): Promise<RequestResult> {
     let attempt = 0;
     let backoff = 300;
+    let remainingRetryWaitBudgetMs = this.config.maxTotalRetryWaitMs;
+    this.retryObservability.requests += 1;
+
+    const waitForRetry = async (desiredWaitMs: number): Promise<boolean> => {
+      const cappedWaitMs = Math.min(desiredWaitMs, this.config.maxRetryWaitMs);
+      if (cappedWaitMs < desiredWaitMs) {
+        this.retryObservability.cappedRetryWaits += 1;
+      }
+
+      if (cappedWaitMs === 0) {
+        this.retryObservability.retryAttempts += 1;
+        return true;
+      }
+
+      if (remainingRetryWaitBudgetMs <= 0) {
+        this.retryObservability.retryBudgetExhaustions += 1;
+        return false;
+      }
+
+      const waitMs = Math.min(cappedWaitMs, remainingRetryWaitBudgetMs);
+      this.retryObservability.retryAttempts += 1;
+      this.retryObservability.totalRetryWaitMs += waitMs;
+      remainingRetryWaitBudgetMs -= waitMs;
+      await delay(waitMs);
+      return true;
+    };
 
     while (attempt <= this.config.maxRetries) {
       attempt += 1;
@@ -438,8 +496,15 @@ export class OpenMetadataLineageProvider implements LineageProvider {
         const shouldRetry = (response.status === 429 || response.status >= 500) && attempt <= this.config.maxRetries;
 
         if (shouldRetry) {
-          const waitMs = jitterMs(retryAfterMs ?? backoff);
-          await delay(waitMs);
+          const canRetry = await waitForRetry(jitterMs(retryAfterMs ?? backoff));
+          if (!canRetry) {
+            return {
+              ok: false,
+              status: 598,
+              bodyText: "Lineage request retry budget exhausted.",
+              retryBudgetExhausted: true,
+            };
+          }
           backoff *= 2;
           continue;
         }
@@ -459,7 +524,15 @@ export class OpenMetadataLineageProvider implements LineageProvider {
           };
         }
 
-        await delay(jitterMs(backoff));
+        const canRetry = await waitForRetry(jitterMs(backoff));
+        if (!canRetry) {
+          return {
+            ok: false,
+            status: 598,
+            bodyText: `Lineage request retry budget exhausted after error: ${String(error)}`,
+            retryBudgetExhausted: true,
+          };
+        }
         backoff *= 2;
       } finally {
         clearTimeout(timer);
