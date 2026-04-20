@@ -127,6 +127,29 @@ test("OpenMetadata provider caches repeated requests for same entity+depth", asy
   }
 });
 
+test("OpenMetadata provider uses documented name-based lineage endpoint only", async () => {
+  const originalFetch = global.fetch;
+  const requestedUrls = [];
+
+  global.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return response(200, { downstreamNodes: [] });
+  };
+
+  try {
+    const provider = new OpenMetadataLineageProvider(createConfig({ maxRetries: 0 }));
+    const result = await provider.getDownstream(createEntity(), 1);
+
+    assert.equal(result.partial, false);
+    assert.equal(requestedUrls.length, 1);
+    assert.ok(requestedUrls[0].includes("/api/v1/lineage/table/name/"));
+    assert.ok(!requestedUrls[0].includes("/api/v1/lineage?"));
+    assert.ok(!requestedUrls[0].includes("entityType=table"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("OpenMetadata provider returns missing metadata warning when all candidates are 404", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => response(404, { message: "not found" });
