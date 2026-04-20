@@ -22,6 +22,10 @@ inputs:
       **/schema.yaml
       **/dbt_project.yml
       **/dbt_project.yaml
+  operating-mode:
+    description: Preset execution mode (fast|balanced|strict-governance)
+    required: false
+    default: balanced
   lineage-provider:
     description: Lineage backend (api|mcp|auto)
     required: false
@@ -57,6 +61,14 @@ inputs:
     description: Maximum retries for transient API failures (0 disables retries)
     required: false
     default: "3"
+  max-retry-wait-ms:
+    description: Maximum wait duration per retry attempt in milliseconds
+    required: false
+    default: "15000"
+  max-total-retry-wait-ms:
+    description: Total retry wait budget across a single lineage request in milliseconds
+    required: false
+    default: "60000"
   fail-on-missing-metadata:
     description: Fail action if referenced entities cannot be resolved in metadata
     required: false
@@ -104,6 +116,26 @@ inputs:
     description: Low-confidence changed entity threshold for high risk
     required: false
     default: "10"
+  risk-weight-governance:
+    description: Optional governance weight used in weighted risk scoring overlay
+    required: false
+    default: "0"
+  risk-weight-usage:
+    description: Optional usage weight used in weighted risk scoring overlay
+    required: false
+    default: "0"
+  risk-weight-data-quality:
+    description: Optional data-quality weight used in weighted risk scoring overlay
+    required: false
+    default: "0"
+  risk-weight-medium-threshold:
+    description: Weighted risk score threshold that lifts low risk to medium
+    required: false
+    default: "6"
+  risk-weight-high-threshold:
+    description: Weighted risk score threshold that escalates risk to high
+    required: false
+    default: "12"
   ai-summary-endpoint:
     description: Optional HTTP endpoint for external AI summarization
     required: false
@@ -139,6 +171,8 @@ outputs:
     description: Overall analysis state (success|partial|degraded|skipped|failed)
   warning-code-counts:
     description: JSON object mapping warning taxonomy code to occurrence count
+  retry-observability:
+    description: JSON object with retry counters (attempts, capped waits, budget exhaustions)
   impact-json:
     description: Compact structured impact JSON for workflow automation
   impact-json-file:
