@@ -7,6 +7,7 @@ import {
   RiskLevel,
   RiskThresholds,
 } from "../types";
+import { extractWarningCode } from "../warnings";
 
 const ORDERED_TYPES: AssetType[] = [
   "dashboard",
@@ -91,7 +92,7 @@ function buildSuggestions(risk: RiskLevel, warnings: string[], byType: Record<As
     suggestions.push("Validate key downstream assets in staging after merge.");
   }
 
-  if (warnings.some((warning) => warning.toLowerCase().includes("missing metadata"))) {
+  if (warnings.some((warning) => extractWarningCode(warning) === "METADATA_MISSING")) {
     suggestions.push("Add or repair missing OpenMetadata entities to improve lineage coverage.");
   }
 

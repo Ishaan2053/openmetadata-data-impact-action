@@ -178,12 +178,39 @@ function parseJsonSafely(text: string): unknown {
 }
 
 function buildFqnCandidates(entity: CanonicalEntity): string[] {
-  const candidates = new Set<string>();
-  candidates.add(entity.fqn);
-  candidates.add([entity.database, entity.schema, entity.table].filter(Boolean).join("."));
-  candidates.add([entity.schema, entity.table].filter(Boolean).join("."));
-  candidates.add(entity.table);
-  return [...candidates].filter((candidate) => candidate.length > 0);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: string | undefined): void => {
+    if (!value || value.length === 0 || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    candidates.push(value);
+  };
+
+  const fullFromParts = [entity.database, entity.schema, entity.table].filter(Boolean).join(".");
+  const schemaTable = [entity.schema, entity.table].filter(Boolean).join(".");
+
+  const fqnWithoutColumn =
+    entity.column && entity.fqn.endsWith(`.${entity.column}`)
+      ? entity.fqn.slice(0, -(`.${entity.column}`).length)
+      : entity.fqn;
+
+  add(fqnWithoutColumn);
+
+  if (entity.database && entity.schema) {
+    add(fullFromParts);
+    return candidates;
+  }
+
+  if (entity.schema) {
+    add(schemaTable);
+    return candidates;
+  }
+
+  add(entity.table);
+  return candidates;
 }
 
 function buildLineageEndpoints(base: string, fqn: string, depth: number): string[] {
