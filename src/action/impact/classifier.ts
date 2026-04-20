@@ -5,6 +5,7 @@ import {
   ImpactedAsset,
   LineageResult,
   RiskLevel,
+  RiskWeighting,
   RiskThresholds,
 } from "../types";
 import { extractWarningCode } from "../warnings";
@@ -52,6 +53,7 @@ function computeRisk(
   criticalTags: string[],
   lowConfidenceEntityCount: number,
   thresholds: RiskThresholds,
+  riskWeighting: RiskWeighting,
 ): RiskLevel {
   const dashboardCount = byType.dashboard.length;
   const pipelineCount = byType.pipeline.length;
@@ -62,6 +64,8 @@ function computeRisk(
     return "high";
   }
 
+  let baseRisk: RiskLevel = "low";
+
   if (
     dashboardCount >= thresholds.dashboardHigh ||
     pipelineCount >= thresholds.pipelineHigh ||
@@ -70,14 +74,59 @@ function computeRisk(
     (warnings.length >= thresholds.warningCountHigh && total >= thresholds.warningMinAssetsHigh) ||
     lowConfidenceEntityCount >= thresholds.lowConfidenceHigh
   ) {
+    baseRisk = "high";
+  }
+
+  if (baseRisk !== "high" && (total > 0 || warnings.length > 0)) {
+    baseRisk = "medium";
+  }
+
+  if (baseRisk === "high") {
+    return baseRisk;
+  }
+
+  const anyWeightEnabled =
+    riskWeighting.governance > 0 || riskWeighting.usage > 0 || riskWeighting.dataQuality > 0;
+  if (!anyWeightEnabled) {
+    return baseRisk;
+  }
+
+  const allAssets = Object.values(byType).flat();
+  const normalizedCriticalTags = new Set(criticalTags.map((tag) => tag.toLowerCase()));
+  const missingOwners = allAssets.filter((asset) => (asset.owners ?? []).length === 0).length;
+  const missingDomain = allAssets.filter((asset) => !(asset.domain && asset.domain.length > 0)).length;
+  const criticalTaggedAssets = allAssets.filter((asset) =>
+    (asset.tags ?? []).some((tag) => normalizedCriticalTags.has(tag.toLowerCase())),
+  ).length;
+
+  const governanceSignal = missingOwners + missingDomain + criticalTaggedAssets;
+  const usageSignal = dashboardCount * 2 + reportCount + pipelineCount;
+  const dataQualityWarningCodes = new Set([
+    "METADATA_MISSING",
+    "LINEAGE_EMPTY_PAYLOAD",
+    "LINEAGE_UNAVAILABLE",
+    "PARSE_FAILED",
+  ]);
+  const dataQualityWarningCount = warnings.filter((warning) => {
+    const code = extractWarningCode(warning);
+    return code ? dataQualityWarningCodes.has(code) : false;
+  }).length;
+  const dataQualitySignal = dataQualityWarningCount + lowConfidenceEntityCount;
+
+  const weightedScore =
+    governanceSignal * riskWeighting.governance +
+    usageSignal * riskWeighting.usage +
+    dataQualitySignal * riskWeighting.dataQuality;
+
+  if (weightedScore >= riskWeighting.highThreshold) {
     return "high";
   }
 
-  if (total > 0 || warnings.length > 0) {
+  if (weightedScore >= riskWeighting.mediumThreshold && baseRisk === "low") {
     return "medium";
   }
 
-  return "low";
+  return baseRisk;
 }
 
 function buildSuggestions(risk: RiskLevel, warnings: string[], byType: Record<AssetType, ImpactedAsset[]>): string[] {
@@ -125,6 +174,7 @@ export function computeImpactSummary(input: {
   lowConfidenceEntityCount: number;
   criticalAssetTags: string[];
   riskThresholds: RiskThresholds;
+  riskWeighting: RiskWeighting;
   truncated: boolean;
   whatChanged?: string[];
   aiSummary?: string;
@@ -184,6 +234,7 @@ export function computeImpactSummary(input: {
     input.criticalAssetTags,
     input.lowConfidenceEntityCount,
     input.riskThresholds,
+    input.riskWeighting,
   );
   const impactedAssetCount = Object.values(byType).reduce((sum, assets) => sum + assets.length, 0);
 
