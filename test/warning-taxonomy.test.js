@@ -39,6 +39,9 @@ test("analysis status is partial for metadata and truncation signals", () => {
   const metadataWarnings = [formatWarning("METADATA_MISSING", "Missing metadata")];
   assert.equal(computeAnalysisStatus(metadataWarnings, false), "partial");
 
+  const commentWarnings = [formatWarning("COMMENT_PUBLISH_FAILED", "Comment publish failed")];
+  assert.equal(computeAnalysisStatus(commentWarnings, false), "partial");
+
   const noWarnings = [];
   assert.equal(computeAnalysisStatus(noWarnings, true), "partial");
 });

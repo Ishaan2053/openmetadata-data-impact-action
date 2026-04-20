@@ -53,3 +53,27 @@ test("deriveWhatChanged returns concise summaries and overflow item", () => {
   assert.match(summary[1], /models\/customers\.sql: \+1\/-0/);
   assert.equal(summary[2], "... and 1 additional tracked file changes.");
 });
+
+test("hydrateTrackedFiles fetches full content when patch appears truncated versus reported changes", async () => {
+  const reader = new DiffReader(createConfig());
+  reader.getFileContentAtRef = async () => "select * from analytics.orders";
+
+  const diff = {
+    prNumber: 12,
+    headSha: "abc123",
+    baseSha: "def456",
+    files: [],
+  };
+
+  const hydrated = await reader.hydrateTrackedFiles(diff, [
+    {
+      path: "models/orders.sql",
+      status: "modified",
+      patch: "@@\n+select * from analytics.orders\n",
+      changes: 25,
+    },
+  ]);
+
+  assert.equal(hydrated.length, 1);
+  assert.equal(hydrated[0].content, "select * from analytics.orders");
+});

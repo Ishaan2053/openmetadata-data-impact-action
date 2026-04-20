@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { computeImpactSummary } = require("../dist/action/impact/classifier.js");
+const { formatWarning } = require("../dist/action/warnings.js");
 
 function seedInput(overrides = {}) {
   return {
@@ -80,4 +81,32 @@ test("computeImpactSummary remains medium when custom high thresholds are not me
   );
 
   assert.equal(summary.riskLevel, "medium");
+});
+
+test("computeImpactSummary adds missing metadata suggestion only for coded taxonomy warnings", () => {
+  const uncodedSummary = computeImpactSummary(
+    seedInput({
+      warnings: ["Missing metadata for warehouse.analytics.orders"],
+      lineageResults: [],
+    }),
+  );
+  assert.ok(
+    !uncodedSummary.suggestions.includes(
+      "Add or repair missing OpenMetadata entities to improve lineage coverage.",
+    ),
+  );
+
+  const codedSummary = computeImpactSummary(
+    seedInput({
+      warnings: [
+        formatWarning("METADATA_MISSING", "Missing metadata for warehouse.analytics.orders"),
+      ],
+      lineageResults: [],
+    }),
+  );
+  assert.ok(
+    codedSummary.suggestions.includes(
+      "Add or repair missing OpenMetadata entities to improve lineage coverage.",
+    ),
+  );
 });

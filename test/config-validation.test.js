@@ -77,6 +77,33 @@ test("getConfig rejects max-lineage-depth above documented OpenMetadata limit", 
     "max-lineage-depth": String(OPENMETADATA_MAX_LINEAGE_DEPTH + 1),
   };
 
+  assert.throws(() => withMockedInputs(inputMap, {}, () => getConfig()), (error) => {
+    assert.ok(error instanceof ConfigurationError);
+    assert.ok(String(error.message).includes("maximum depth of 3 per request"));
+    return true;
+  });
+});
+
+test("getConfig allows max-retries set to zero", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "max-retries": "0",
+  };
+
+  const config = withMockedInputs(inputMap, {}, () => getConfig());
+  assert.equal(config.maxRetries, 0);
+});
+
+test("getConfig rejects negative max-retries", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "max-retries": "-1",
+  };
+
   assert.throws(
     () => withMockedInputs(inputMap, {}, () => getConfig()),
     (error) => error instanceof ConfigurationError,

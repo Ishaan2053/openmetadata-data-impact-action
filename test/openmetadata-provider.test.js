@@ -150,6 +150,56 @@ test("OpenMetadata provider uses documented name-based lineage endpoint only", a
   }
 });
 
+test("OpenMetadata provider avoids ambiguous schema/table fallback when fully-qualified parts are present", async () => {
+  const originalFetch = global.fetch;
+  const requestedUrls = [];
+
+  global.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return response(404, { message: "not found" });
+  };
+
+  try {
+    const provider = new OpenMetadataLineageProvider(createConfig({ maxRetries: 0 }));
+    await provider.getDownstream(createEntity(), 1);
+
+    assert.equal(requestedUrls.length, 1);
+    assert.ok(requestedUrls[0].includes("/api/v1/lineage/table/name/warehouse.analytics.orders"));
+    assert.ok(!requestedUrls[0].includes("/name/analytics.orders"));
+    assert.ok(!requestedUrls[0].includes("/name/orders"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("OpenMetadata provider strips column suffix for table lineage lookup", async () => {
+  const originalFetch = global.fetch;
+  const requestedUrls = [];
+
+  global.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return response(200, { downstreamNodes: [] });
+  };
+
+  try {
+    const provider = new OpenMetadataLineageProvider(createConfig({ maxRetries: 0 }));
+    await provider.getDownstream(
+      {
+        ...createEntity(),
+        fqn: "warehouse.analytics.orders.order_id",
+        column: "order_id",
+      },
+      1,
+    );
+
+    assert.equal(requestedUrls.length, 1);
+    assert.ok(requestedUrls[0].includes("/api/v1/lineage/table/name/warehouse.analytics.orders"));
+    assert.ok(!requestedUrls[0].includes("orders.order_id"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("OpenMetadata provider returns missing metadata warning when all candidates are 404", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => response(404, { message: "not found" });

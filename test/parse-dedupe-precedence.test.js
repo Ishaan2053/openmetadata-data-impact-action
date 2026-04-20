@@ -5,7 +5,7 @@ const {
 } = require("../dist/action/parse/index.js");
 const { normalizeEntities } = require("../dist/action/parse/normalize.js");
 
-test("dbt-like SQL files avoid SQL extractor low-confidence noise", () => {
+test("dbt-like SQL files include dbt references and SQL table extraction without low-confidence noise", () => {
   const files = [
     {
       path: "models/orders.sql",
@@ -25,7 +25,9 @@ test("dbt-like SQL files avoid SQL extractor low-confidence noise", () => {
   });
 
   assert.equal(result.lowConfidenceEntityCount, 0);
-  assert.ok(result.entities.every((entity) => entity.sourceKind === "dbt"));
+  assert.ok(result.entities.some((entity) => entity.sourceKind === "dbt"));
+  assert.ok(result.entities.some((entity) => entity.sourceKind === "sql"));
+  assert.ok(result.entities.some((entity) => entity.fqn === "analytics.orders"));
   assert.ok(result.entities.some((entity) => entity.fqn.endsWith("orders")));
   assert.ok(result.entities.some((entity) => entity.fqn.endsWith("stg_orders")));
 });
