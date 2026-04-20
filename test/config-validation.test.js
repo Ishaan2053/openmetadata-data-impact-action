@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const core = require("@actions/core");
-const { getConfig } = require("../dist/action/config.js");
+const { getConfig, OPENMETADATA_MAX_LINEAGE_DEPTH } = require("../dist/action/config.js");
 const { ConfigurationError } = require("../dist/action/types.js");
 
 function withMockedInputs(inputMap, boolMap, fn) {
@@ -67,4 +67,18 @@ test("getConfig parses optional impact-json-file input", () => {
 
   const config = withMockedInputs(inputMap, {}, () => getConfig());
   assert.equal(config.impactJsonFile, ".artifacts/impact.json");
+});
+
+test("getConfig rejects max-lineage-depth above documented OpenMetadata limit", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "max-lineage-depth": String(OPENMETADATA_MAX_LINEAGE_DEPTH + 1),
+  };
+
+  assert.throws(
+    () => withMockedInputs(inputMap, {}, () => getConfig()),
+    (error) => error instanceof ConfigurationError,
+  );
 });

@@ -7,6 +7,7 @@ const {
   DEFAULT_PATTERNS,
   DEFAULT_CRITICAL_TAGS,
   DEFAULT_RISK_THRESHOLDS,
+  OPENMETADATA_MAX_LINEAGE_DEPTH,
 } = require("../dist/action/config.js");
 
 function parseMultilineDefault(value) {
@@ -26,6 +27,7 @@ test("action.yml defaults stay in sync with runtime config defaults", () => {
     parseMultilineDefault(inputs["critical-asset-tags"].default),
     DEFAULT_CRITICAL_TAGS,
   );
+  assert.equal(String(inputs["max-lineage-depth"].default), String(OPENMETADATA_MAX_LINEAGE_DEPTH));
 
   assert.equal(String(inputs["risk-high-dashboard-count"].default), String(DEFAULT_RISK_THRESHOLDS.dashboardHigh));
   assert.equal(String(inputs["risk-high-pipeline-count"].default), String(DEFAULT_RISK_THRESHOLDS.pipelineHigh));
