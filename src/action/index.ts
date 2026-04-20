@@ -2,7 +2,7 @@ import * as core from "@actions/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getConfig } from "./config";
-import { logError, logInfo, withLogGroup } from "./logging";
+import { logError, logInfo, logWarning, withLogGroup } from "./logging";
 import { DiffReader } from "./github/diffReader";
 import { extractEntitiesFromFilesWithOptions } from "./parse";
 import { LineageProvider } from "./lineage/provider";
@@ -25,6 +25,7 @@ import {
 } from "./warnings";
 
 const OUTPUT_JSON_MAX_ASSETS = 50;
+const MAX_IMPACT_JSON_OUTPUT_BYTES = 900_000;
 
 interface CompactImpactJson {
   version: number;
@@ -49,6 +50,12 @@ interface CompactImpactJson {
     owners?: string[];
     domain?: string;
   }>;
+  outputTruncated?: boolean;
+}
+
+interface CompactOutputSerialization {
+  json: string;
+  truncated: boolean;
 }
 
 interface PrimaryOutputs {
@@ -67,6 +74,89 @@ function setPrimaryOutputs(outputs: PrimaryOutputs): void {
   core.setOutput("changed-entity-count", String(outputs.changedEntityCount));
   core.setOutput("low-confidence-entity-count", String(outputs.lowConfidenceEntityCount));
   core.setOutput("truncated-analysis", String(outputs.truncated));
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function truncateStringList(values: string[], maxItems: number, maxItemLength: number): string[] {
+  return values
+    .slice(0, maxItems)
+    .map((value) => truncateText(value, maxItemLength));
+}
+
+function truncateSampleAssets(
+  assets: CompactImpactJson["sampleImpactedAssets"],
+  maxItems: number,
+): CompactImpactJson["sampleImpactedAssets"] {
+  return assets.slice(0, maxItems).map((asset) => ({
+    ...asset,
+    fqn: truncateText(asset.fqn, 220),
+    name: truncateText(asset.name, 180),
+    reasons: truncateStringList(asset.reasons, 3, 220),
+    ...(asset.tags ? { tags: truncateStringList(asset.tags, 8, 80) } : {}),
+    ...(asset.owners ? { owners: truncateStringList(asset.owners, 6, 80) } : {}),
+    ...(asset.domain ? { domain: truncateText(asset.domain, 120) } : {}),
+  }));
+}
+
+function serializeCompactImpactJsonForOutput(
+  payload: CompactImpactJson,
+  maxBytes: number = MAX_IMPACT_JSON_OUTPUT_BYTES,
+): CompactOutputSerialization {
+  const serialize = (candidate: CompactImpactJson): string => JSON.stringify(candidate);
+
+  const initial = serialize(payload);
+  if (Buffer.byteLength(initial, "utf8") <= maxBytes) {
+    return { json: initial, truncated: false };
+  }
+
+  const candidates: Array<{ maxWarnings: number; maxWhatChanged: number; maxAssets: number }> = [
+    { maxWarnings: 120, maxWhatChanged: 30, maxAssets: 30 },
+    { maxWarnings: 80, maxWhatChanged: 20, maxAssets: 20 },
+    { maxWarnings: 40, maxWhatChanged: 12, maxAssets: 10 },
+    { maxWarnings: 20, maxWhatChanged: 6, maxAssets: 0 },
+    { maxWarnings: 0, maxWhatChanged: 0, maxAssets: 0 },
+  ];
+
+  for (const limits of candidates) {
+    const candidatePayload: CompactImpactJson = {
+      ...payload,
+      warnings: truncateStringList(payload.warnings, limits.maxWarnings, 240),
+      whatChanged: truncateStringList(payload.whatChanged, limits.maxWhatChanged, 220),
+      sampleImpactedAssets: truncateSampleAssets(payload.sampleImpactedAssets, limits.maxAssets),
+      outputTruncated: true,
+    };
+
+    const json = serialize(candidatePayload);
+    if (Buffer.byteLength(json, "utf8") <= maxBytes) {
+      return { json, truncated: true };
+    }
+  }
+
+  const minimal: CompactImpactJson = {
+    version: payload.version,
+    generatedAt: payload.generatedAt,
+    analysisStatus: payload.analysisStatus,
+    riskLevel: payload.riskLevel,
+    changedEntityCount: payload.changedEntityCount,
+    lowConfidenceEntityCount: payload.lowConfidenceEntityCount,
+    impactedAssetCount: payload.impactedAssetCount,
+    warningCount: payload.warningCount,
+    warnings: [],
+    warningCodeCounts: payload.warningCodeCounts,
+    truncated: payload.truncated,
+    whatChanged: [],
+    impactedByTypeCounts: payload.impactedByTypeCounts,
+    sampleImpactedAssets: [],
+    outputTruncated: true,
+  };
+
+  return { json: serialize(minimal), truncated: true };
 }
 
 async function publishImpactCommentBestEffort(
@@ -171,7 +261,11 @@ function buildCompactImpactJson(input: {
 async function emitStructuredOutputs(config: ReturnType<typeof getConfig>, compactPayload: CompactImpactJson, fullPayload: unknown): Promise<void> {
   core.setOutput("analysis-status", compactPayload.analysisStatus);
   core.setOutput("warning-code-counts", JSON.stringify(compactPayload.warningCodeCounts));
-  core.setOutput("impact-json", JSON.stringify(compactPayload));
+  const serializedCompact = serializeCompactImpactJsonForOutput(compactPayload);
+  if (serializedCompact.truncated) {
+    logWarning("impact-json output exceeded safe size budget and was truncated.");
+  }
+  core.setOutput("impact-json", serializedCompact.json);
 
   if (config.impactJsonFile) {
     const resolvedPath = await writeImpactJsonFile(config.impactJsonFile, fullPayload);
@@ -502,3 +596,5 @@ export async function run(): Promise<void> {
 if (require.main === module) {
   void run();
 }
+
+export { serializeCompactImpactJsonForOutput };
