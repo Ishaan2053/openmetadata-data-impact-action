@@ -4,6 +4,15 @@ interface SqlExtractorOptions {
   strictMode: boolean;
 }
 
+function isSqlLikePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return (
+    lower.endsWith(".sql") ||
+    lower.endsWith(".sql.jinja") ||
+    lower.endsWith(".jinja")
+  );
+}
+
 const SQL_TABLE_PATTERN =
   /\b(?:from|join|into|update|table|view|merge\s+into|delete\s+from|truncate\s+table)\s+([`"\[\]a-zA-Z0-9_.-]+)/gi;
 const SQL_COLUMN_PATTERN = /\b([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_.-]*)\.([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_-]*)\b/g;
@@ -57,7 +66,7 @@ function splitTableParts(tableRef: string): {
 }
 
 export function extractSqlEntities(file: ChangedFile, options: SqlExtractorOptions): ParsedEntity[] {
-  if (!file.path.toLowerCase().endsWith(".sql")) {
+  if (!isSqlLikePath(file.path)) {
     return [];
   }
 

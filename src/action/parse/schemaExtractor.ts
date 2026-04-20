@@ -1,5 +1,6 @@
 import * as yaml from "js-yaml";
 import { ChangedFile, ParsedEntity } from "../types";
+import { formatWarning } from "../warnings";
 
 interface DbtSchemaColumn {
   name?: string;
@@ -85,17 +86,23 @@ function pushTableAndColumns(
   }
 }
 
-export function extractSchemaEntities(file: ChangedFile): ParsedEntity[] {
+interface SchemaExtractionResult {
+  entities: ParsedEntity[];
+  warnings: string[];
+}
+
+export function extractSchemaEntities(file: ChangedFile): SchemaExtractionResult {
   if (!isSchemaFile(file.path)) {
-    return [];
+    return { entities: [], warnings: [] };
   }
 
   const text = (file.content && file.content.trim().length > 0 ? file.content : cleanPatch(file.patch)).trim();
   if (!text) {
-    return [];
+    return { entities: [], warnings: [] };
   }
 
   const entities: ParsedEntity[] = [];
+  const warnings: string[] = [];
 
   try {
     const document = yaml.load(text) as SchemaDocument | undefined;
@@ -114,6 +121,13 @@ export function extractSchemaEntities(file: ChangedFile): ParsedEntity[] {
       pushTableAndColumns(entities, file.path, table.name, undefined, table.columns);
     }
   } catch {
+    warnings.push(
+      formatWarning(
+        "PARSE_FAILED",
+        `Failed to fully parse schema file ${file.path}; using fallback name-based extraction.`,
+      ),
+    );
+
     // Fallback heuristic for partial patch fragments.
     const tableMatches = text.matchAll(/\bname:\s*([a-zA-Z0-9_\-.]+)/g);
     for (const match of tableMatches) {
@@ -139,5 +153,8 @@ export function extractSchemaEntities(file: ChangedFile): ParsedEntity[] {
     }
   }
 
-  return [...dedupe.values()];
+  return {
+    entities: [...dedupe.values()],
+    warnings,
+  };
 }

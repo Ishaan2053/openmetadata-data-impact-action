@@ -26,6 +26,11 @@ function isDbtLike(path: string): boolean {
   );
 }
 
+function isSqlLike(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".sql") || lower.endsWith(".sql.jinja") || lower.endsWith(".jinja");
+}
+
 export function extractEntitiesFromFiles(files: ChangedFile[]): {
   entities: ReturnType<typeof normalizeEntities>;
   warnings: string[];
@@ -50,19 +55,25 @@ export function extractEntitiesFromFilesWithOptions(files: ChangedFile[], option
 
   for (const file of files) {
     try {
-      const lower = file.path.toLowerCase();
       const dbtLike = isDbtLike(file.path);
+      const sqlLike = isSqlLike(file.path);
 
       if (dbtLike) {
         parsed.push(...extractDbtEntities(file));
       }
 
-      if (lower.endsWith(".sql") && !dbtLike) {
-        parsed.push(...extractSqlEntities(file, { strictMode: options.strictSqlParse }));
+      if (sqlLike) {
+        parsed.push(
+          ...extractSqlEntities(file, {
+            strictMode: options.strictSqlParse || dbtLike,
+          }),
+        );
       }
 
       if (isSchemaLike(file.path)) {
-        parsed.push(...extractSchemaEntities(file));
+        const extractedSchema = extractSchemaEntities(file);
+        parsed.push(...extractedSchema.entities);
+        warnings.push(...extractedSchema.warnings);
       }
     } catch (error) {
       const message = formatWarning(
