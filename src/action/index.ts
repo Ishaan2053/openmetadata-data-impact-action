@@ -41,6 +41,7 @@ interface CompactImpactJson {
   truncated: boolean;
   whatChanged: string[];
   impactedByTypeCounts: Record<string, number>;
+  retryObservability: Record<string, number>;
   sampleImpactedAssets: Array<{
     type: string;
     fqn: string;
@@ -151,6 +152,7 @@ function serializeCompactImpactJsonForOutput(
     warningCodeCounts: payload.warningCodeCounts,
     truncated: payload.truncated,
     whatChanged: [],
+    retryObservability: payload.retryObservability,
     impactedByTypeCounts: payload.impactedByTypeCounts,
     sampleImpactedAssets: [],
     outputTruncated: true,
@@ -205,6 +207,7 @@ function buildCompactImpactJson(input: {
   warnings: string[];
   truncated: boolean;
   whatChanged: string[];
+  retryObservability?: Record<string, number>;
   impactedByType?: ImpactSummary["impactedByType"];
 }): CompactImpactJson {
   const impactedByTypeCounts: Record<string, number> = {
@@ -253,6 +256,7 @@ function buildCompactImpactJson(input: {
     warningCodeCounts: warningCodeCounts(input.warnings),
     truncated: input.truncated,
     whatChanged: input.whatChanged,
+    retryObservability: input.retryObservability ?? {},
     impactedByTypeCounts,
     sampleImpactedAssets,
   };
@@ -261,6 +265,7 @@ function buildCompactImpactJson(input: {
 async function emitStructuredOutputs(config: ReturnType<typeof getConfig>, compactPayload: CompactImpactJson, fullPayload: unknown): Promise<void> {
   core.setOutput("analysis-status", compactPayload.analysisStatus);
   core.setOutput("warning-code-counts", JSON.stringify(compactPayload.warningCodeCounts));
+  core.setOutput("retry-observability", JSON.stringify(compactPayload.retryObservability));
   const serializedCompact = serializeCompactImpactJsonForOutput(compactPayload);
   if (serializedCompact.truncated) {
     logWarning("impact-json output exceeded safe size budget and was truncated.");
@@ -274,6 +279,10 @@ async function emitStructuredOutputs(config: ReturnType<typeof getConfig>, compa
   }
 
   core.setOutput("impact-json-file", "");
+}
+
+function collectRetryObservability(provider: LineageProvider): Record<string, number> {
+  return provider.getObservabilityCounters?.() ?? {};
 }
 
 function createProvider(config: ReturnType<typeof getConfig>): {
@@ -356,6 +365,7 @@ export async function run(): Promise<void> {
         warnings: [],
         truncated: false,
         whatChanged: [],
+        retryObservability: {},
       });
 
       await emitStructuredOutputs(runtimeConfig, compactPayload, {
@@ -431,6 +441,7 @@ export async function run(): Promise<void> {
         warnings: branchWarnings,
         truncated,
         whatChanged,
+        retryObservability: {},
       });
 
       await emitStructuredOutputs(runtimeConfig, compactPayload, {
@@ -461,6 +472,7 @@ export async function run(): Promise<void> {
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
       criticalAssetTags: runtimeConfig.criticalAssetTags,
       riskThresholds: runtimeConfig.riskThresholds,
+      riskWeighting: runtimeConfig.riskWeighting,
       truncated,
       whatChanged,
     });
@@ -487,6 +499,7 @@ export async function run(): Promise<void> {
       lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
       criticalAssetTags: runtimeConfig.criticalAssetTags,
       riskThresholds: runtimeConfig.riskThresholds,
+      riskWeighting: runtimeConfig.riskWeighting,
       truncated,
       whatChanged,
       ...(ai.summary ? { aiSummary: ai.summary } : {}),
@@ -513,6 +526,7 @@ export async function run(): Promise<void> {
         lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
         criticalAssetTags: runtimeConfig.criticalAssetTags,
         riskThresholds: runtimeConfig.riskThresholds,
+        riskWeighting: runtimeConfig.riskWeighting,
         truncated,
         whatChanged,
         ...(ai.summary ? { aiSummary: ai.summary } : {}),
@@ -532,6 +546,7 @@ export async function run(): Promise<void> {
     });
 
     const analysisStatus = computeAnalysisStatus(finalSummary.warnings, finalSummary.truncated);
+    const retryObservability = collectRetryObservability(providerConfig.provider);
     const compactPayload = buildCompactImpactJson({
       analysisStatus,
       riskLevel: finalSummary.riskLevel,
@@ -541,6 +556,7 @@ export async function run(): Promise<void> {
       warnings: finalSummary.warnings,
       truncated: finalSummary.truncated,
       whatChanged: finalSummary.whatChanged,
+      retryObservability,
       impactedByType: finalSummary.impactedByType,
     });
 
@@ -565,6 +581,7 @@ export async function run(): Promise<void> {
 
     core.setOutput("analysis-status", "failed");
     core.setOutput("warning-code-counts", "{}");
+    core.setOutput("retry-observability", "{}");
     core.setOutput(
       "impact-json",
       JSON.stringify({

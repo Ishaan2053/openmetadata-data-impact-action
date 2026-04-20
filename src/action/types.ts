@@ -14,6 +14,8 @@ export type RiskLevel = "high" | "medium" | "low";
 
 export type LineageProviderMode = "api" | "mcp" | "auto";
 
+export type OperatingMode = "fast" | "balanced" | "strict-governance";
+
 export interface RiskThresholds {
   dashboardHigh: number;
   pipelineHigh: number;
@@ -24,10 +26,19 @@ export interface RiskThresholds {
   lowConfidenceHigh: number;
 }
 
+export interface RiskWeighting {
+  governance: number;
+  usage: number;
+  dataQuality: number;
+  mediumThreshold: number;
+  highThreshold: number;
+}
+
 export interface ActionConfig {
   openMetadataEndpoint: string;
   authToken: string;
   githubToken: string;
+  operatingMode: OperatingMode;
   filePatterns: string[];
   lineageProvider: LineageProviderMode;
   mcpEndpoint?: string | undefined;
@@ -38,6 +49,8 @@ export interface ActionConfig {
   maxDownstreamAssets: number;
   requestTimeoutMs: number;
   maxRetries: number;
+  maxRetryWaitMs: number;
+  maxTotalRetryWaitMs: number;
   failOnMissingMetadata: boolean;
   aiSummaryEnabled: boolean;
   aiSummaryEndpoint?: string | undefined;
@@ -45,6 +58,7 @@ export interface ActionConfig {
   strictSqlParse: boolean;
   criticalAssetTags: string[];
   riskThresholds: RiskThresholds;
+  riskWeighting: RiskWeighting;
   allowedEndpointHosts: string[];
   allowInsecureLocalEndpoints: boolean;
   maxCommentAssets: number;
