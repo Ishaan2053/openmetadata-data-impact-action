@@ -69,6 +69,25 @@ function setPrimaryOutputs(outputs: PrimaryOutputs): void {
   core.setOutput("truncated-analysis", String(outputs.truncated));
 }
 
+async function publishImpactCommentBestEffort(
+  githubToken: string,
+  prNumber: number,
+  body: string,
+): Promise<string | undefined> {
+  try {
+    await upsertImpactComment(githubToken, prNumber, body);
+    return undefined;
+  } catch (error) {
+    const asRecord = error as { status?: number };
+    const reason = asRecord.status ? `status ${asRecord.status}` : String(error);
+    logError(`Unable to publish PR impact comment (${reason}). Continuing without failing analysis.`);
+    return formatWarning(
+      "COMMENT_PUBLISH_FAILED",
+      `Unable to publish PR impact comment (${reason}).`,
+    );
+  }
+}
+
 async function writeJobSummary(markdown: string): Promise<void> {
   const prepared = truncateForStepSummary(markdown);
   if (prepared.truncated) {
@@ -286,17 +305,28 @@ export async function run(): Promise<void> {
         "No table or column references were extracted from tracked file changes.",
       ].join("\n");
 
-      await upsertImpactComment(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
+      const commentWarning = await withLogGroup("Publish PR comment", async () => {
+        return publishImpactCommentBestEffort(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
+      });
+
+      const branchWarnings = [...guardrailWarnings, ...extracted.warnings];
+      if (commentWarning) {
+        branchWarnings.push(commentWarning);
+      }
+
+      const noEntityReport = commentWarning
+        ? `${noEntityComment}\n\n### Warnings\n- ${commentWarning}`
+        : noEntityComment;
+
       setPrimaryOutputs({
         riskLevel: "low",
         impactedAssetCount: 0,
-        warningCount: extracted.warnings.length + guardrailWarnings.length,
+        warningCount: branchWarnings.length,
         changedEntityCount: 0,
         lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
         truncated,
       });
 
-      const branchWarnings = [...guardrailWarnings, ...extracted.warnings];
       const branchStatus = computeAnalysisStatus(branchWarnings, truncated);
       const compactPayload = buildCompactImpactJson({
         analysisStatus: branchStatus,
@@ -311,10 +341,10 @@ export async function run(): Promise<void> {
 
       await emitStructuredOutputs(runtimeConfig, compactPayload, {
         ...compactPayload,
-        report: noEntityComment,
+        report: noEntityReport,
       });
 
-      await writeJobSummary(noEntityComment);
+      await writeJobSummary(noEntityReport);
       return;
     }
 
@@ -348,7 +378,7 @@ export async function run(): Promise<void> {
       warnings: preSummary.warnings,
     });
 
-    const finalWarnings = [...preSummary.warnings];
+    let finalWarnings = [...preSummary.warnings];
     if (providerConfig.providerNotice) {
       logInfo(providerConfig.providerNotice);
     }
@@ -356,7 +386,7 @@ export async function run(): Promise<void> {
       finalWarnings.push(ai.warning);
     }
 
-    const finalSummary = computeImpactSummary({
+    let finalSummary = computeImpactSummary({
       changedEntities: extracted.entities,
       lineageResults: traversal.lineageResults,
       warnings: finalWarnings,
@@ -376,10 +406,26 @@ export async function run(): Promise<void> {
     }
 
     const comment = renderImpactComment(finalSummary, runtimeConfig);
-    const detailedReport = renderDetailedImpactReport(finalSummary, runtimeConfig);
-    await withLogGroup("Publish PR comment", async () => {
-      await upsertImpactComment(runtimeConfig.githubToken, diff.prNumber, comment);
+    const commentWarning = await withLogGroup("Publish PR comment", async () => {
+      return publishImpactCommentBestEffort(runtimeConfig.githubToken, diff.prNumber, comment);
     });
+
+    if (commentWarning) {
+      finalWarnings = [...finalWarnings, commentWarning];
+      finalSummary = computeImpactSummary({
+        changedEntities: extracted.entities,
+        lineageResults: traversal.lineageResults,
+        warnings: finalWarnings,
+        lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
+        criticalAssetTags: runtimeConfig.criticalAssetTags,
+        riskThresholds: runtimeConfig.riskThresholds,
+        truncated,
+        whatChanged,
+        ...(ai.summary ? { aiSummary: ai.summary } : {}),
+      });
+    }
+
+    const detailedReport = renderDetailedImpactReport(finalSummary, runtimeConfig);
     await writeJobSummary(detailedReport);
 
     setPrimaryOutputs({
