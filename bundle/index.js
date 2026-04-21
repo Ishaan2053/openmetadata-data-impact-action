@@ -36125,6 +36125,43 @@ const ORDER = [
     "topic",
     "other",
 ];
+function neutralizeMentions(value) {
+    return value.replace(/@/g, "&#64;");
+}
+function neutralizeDangerousSchemes(value) {
+    return value
+        .replace(/\bjavascript:/gi, "javascript&#58;")
+        .replace(/\bvbscript:/gi, "vbscript&#58;")
+        .replace(/\bdata:/gi, "data&#58;");
+}
+function escapeMarkdownInline(value) {
+    return value.replace(/([\\`*_{}\[\]()|<>])/g, "\\$1");
+}
+function sanitizeText(value) {
+    const flattened = value.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+    return escapeMarkdownInline(neutralizeDangerousSchemes(neutralizeMentions(flattened)));
+}
+function sanitizeMultiline(value) {
+    return value
+        .split(/\r?\n/)
+        .map((line) => sanitizeText(line))
+        .join("\n");
+}
+function safeHttpUrl(url) {
+    if (!url) {
+        return undefined;
+    }
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            return parsed.toString();
+        }
+        return undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 function capitalizeRisk(risk) {
     return risk.charAt(0).toUpperCase() + risk.slice(1);
 }
@@ -36138,21 +36175,23 @@ function renderAssetRows(summary, config) {
         rows.push(`### ${DISPLAY_LABELS[type]} (${assets.length})`);
         const slice = assets.slice(0, config.maxCommentAssets);
         for (const asset of slice) {
-            const linkOrName = asset.url ? `[${asset.name}](${asset.url})` : asset.name;
-            const reason = asset.reasons[0] ?? "Downstream dependency";
+            const safeName = sanitizeText(asset.name);
+            const safeUrl = safeHttpUrl(asset.url);
+            const linkOrName = safeUrl ? `[${safeName}](${safeUrl})` : safeName;
+            const reason = sanitizeText(asset.reasons[0] ?? "Downstream dependency");
             const criticalTag = (asset.tags ?? []).some((tag) => config.criticalAssetTags.includes(tag))
                 ? " [critical]"
                 : "";
-            rows.push(`- ${linkOrName} (${asset.fqn})`);
+            rows.push(`- ${linkOrName} (${sanitizeText(asset.fqn)})`);
             rows.push(`  - Reason: ${reason}${criticalTag}`);
             if (asset.owners && asset.owners.length > 0) {
-                rows.push(`  - Owners: ${asset.owners.join(", ")}`);
+                rows.push(`  - Owners: ${asset.owners.map((owner) => sanitizeText(owner)).join(", ")}`);
             }
             if (asset.domain) {
-                rows.push(`  - Domain: ${asset.domain}`);
+                rows.push(`  - Domain: ${sanitizeText(asset.domain)}`);
             }
             if (asset.glossaryTerms && asset.glossaryTerms.length > 0) {
-                rows.push(`  - Glossary terms: ${asset.glossaryTerms.join(", ")}`);
+                rows.push(`  - Glossary terms: ${asset.glossaryTerms.map((term) => sanitizeText(term)).join(", ")}`);
             }
         }
         if (assets.length > config.maxCommentAssets) {
@@ -36170,7 +36209,7 @@ function renderImpactComment(summary, config) {
     if (whatChanged.length > 0) {
         lines.push("### What Changed");
         for (const item of whatChanged) {
-            lines.push(`- ${item}`);
+            lines.push(`- ${sanitizeText(item)}`);
         }
         lines.push("");
     }
@@ -36184,7 +36223,7 @@ function renderImpactComment(summary, config) {
     lines.push("");
     if (summary.aiSummary) {
         lines.push("### Optional AI Summary");
-        lines.push(summary.aiSummary);
+        lines.push(sanitizeMultiline(summary.aiSummary));
         lines.push("");
     }
     const assets = renderAssetRows(summary, config);
@@ -36202,14 +36241,14 @@ function renderImpactComment(summary, config) {
     if (summary.warnings.length > 0) {
         lines.push("### Warnings");
         for (const warning of summary.warnings) {
-            lines.push(`- ${warning}`);
+            lines.push(`- ${sanitizeText(warning)}`);
         }
         lines.push("");
     }
     if (summary.suggestions.length > 0) {
         lines.push("### Suggestions");
         for (const suggestion of summary.suggestions) {
-            lines.push(`- ${suggestion}`);
+            lines.push(`- ${sanitizeText(suggestion)}`);
         }
         lines.push("");
     }
@@ -36225,7 +36264,7 @@ function renderDetailedImpactReport(summary, config) {
     if (whatChanged.length > 0) {
         lines.push("### What Changed");
         for (const item of whatChanged) {
-            lines.push(`- ${item}`);
+            lines.push(`- ${sanitizeText(item)}`);
         }
         lines.push("");
     }
@@ -36246,13 +36285,66 @@ function renderDetailedImpactReport(summary, config) {
     if (summary.warnings.length > 0) {
         lines.push("### Full Warning List");
         for (const warning of summary.warnings) {
-            lines.push(`- ${warning}`);
+            lines.push(`- ${sanitizeText(warning)}`);
         }
         lines.push("");
     }
     return lines.join("\n").trim();
 }
 //# sourceMappingURL=render.js.map
+
+/***/ }),
+
+/***/ 5955:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.truncateForStepSummary = truncateForStepSummary;
+const GITHUB_STEP_SUMMARY_MAX_BYTES = 1024 * 1024;
+const SUMMARY_TRUNCATION_NOTICE = "\n\n---\nSummary truncated to fit GitHub Actions step summary limit (1 MiB). Full details remain available in the PR comment and action outputs.";
+function byteLength(value) {
+    return Buffer.byteLength(value, "utf8");
+}
+function sliceToMaxBytes(value, maxBytes) {
+    if (maxBytes <= 0) {
+        return "";
+    }
+    let low = 0;
+    let high = value.length;
+    while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const candidate = value.slice(0, mid);
+        if (byteLength(candidate) <= maxBytes) {
+            low = mid;
+        }
+        else {
+            high = mid - 1;
+        }
+    }
+    return value.slice(0, low);
+}
+function truncateForStepSummary(markdown, maxBytes = GITHUB_STEP_SUMMARY_MAX_BYTES) {
+    const normalized = markdown.trim();
+    if (byteLength(normalized) <= maxBytes) {
+        return { markdown: normalized, truncated: false };
+    }
+    const noticeBytes = byteLength(SUMMARY_TRUNCATION_NOTICE);
+    if (noticeBytes >= maxBytes) {
+        return {
+            markdown: sliceToMaxBytes(SUMMARY_TRUNCATION_NOTICE, maxBytes),
+            truncated: true,
+        };
+    }
+    const allowedBodyBytes = maxBytes - noticeBytes;
+    const truncatedBody = sliceToMaxBytes(normalized, allowedBodyBytes).trimEnd();
+    return {
+        markdown: `${truncatedBody}${SUMMARY_TRUNCATION_NOTICE}`,
+        truncated: true,
+    };
+}
+//# sourceMappingURL=summary.js.map
 
 /***/ }),
 
@@ -36295,7 +36387,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_RISK_THRESHOLDS = exports.DEFAULT_CRITICAL_TAGS = exports.DEFAULT_PATTERNS = void 0;
+exports.DEFAULT_RISK_THRESHOLDS = exports.DEFAULT_RISK_WEIGHTING = exports.DEFAULT_RETRY_SAFEGUARDS = exports.DEFAULT_OPERATING_MODE = exports.OPENMETADATA_MAX_LINEAGE_DEPTH = exports.DEFAULT_CRITICAL_TAGS = exports.DEFAULT_PATTERNS = void 0;
 exports.getConfig = getConfig;
 const core = __importStar(__nccwpck_require__(7484));
 const types_1 = __nccwpck_require__(2868);
@@ -36309,6 +36401,65 @@ exports.DEFAULT_PATTERNS = [
     "**/dbt_project.yaml",
 ];
 exports.DEFAULT_CRITICAL_TAGS = ["tier1", "critical", "business_critical"];
+exports.OPENMETADATA_MAX_LINEAGE_DEPTH = 3;
+exports.DEFAULT_OPERATING_MODE = "balanced";
+const BASE_RUNTIME_DEFAULTS = {
+    maxLineageDepth: exports.OPENMETADATA_MAX_LINEAGE_DEPTH,
+    maxConcurrency: 4,
+    maxTrackedFiles: 200,
+    maxEntities: 500,
+    maxDownstreamAssets: 2000,
+    requestTimeoutMs: 15000,
+    maxRetries: 3,
+    failOnMissingMetadata: false,
+    strictSqlParse: false,
+};
+const OPERATING_MODE_PRESETS = {
+    fast: {
+        maxLineageDepth: 2,
+        maxConcurrency: 6,
+        maxTrackedFiles: 120,
+        maxEntities: 300,
+        maxDownstreamAssets: 1000,
+        requestTimeoutMs: 10000,
+        maxRetries: 1,
+        failOnMissingMetadata: false,
+        strictSqlParse: false,
+    },
+    balanced: {
+        maxLineageDepth: BASE_RUNTIME_DEFAULTS.maxLineageDepth,
+        maxConcurrency: BASE_RUNTIME_DEFAULTS.maxConcurrency,
+        maxTrackedFiles: BASE_RUNTIME_DEFAULTS.maxTrackedFiles,
+        maxEntities: BASE_RUNTIME_DEFAULTS.maxEntities,
+        maxDownstreamAssets: BASE_RUNTIME_DEFAULTS.maxDownstreamAssets,
+        requestTimeoutMs: BASE_RUNTIME_DEFAULTS.requestTimeoutMs,
+        maxRetries: BASE_RUNTIME_DEFAULTS.maxRetries,
+        failOnMissingMetadata: BASE_RUNTIME_DEFAULTS.failOnMissingMetadata,
+        strictSqlParse: BASE_RUNTIME_DEFAULTS.strictSqlParse,
+    },
+    "strict-governance": {
+        maxLineageDepth: 3,
+        maxConcurrency: 3,
+        maxTrackedFiles: 300,
+        maxEntities: 800,
+        maxDownstreamAssets: 3000,
+        requestTimeoutMs: 20000,
+        maxRetries: 5,
+        failOnMissingMetadata: true,
+        strictSqlParse: true,
+    },
+};
+exports.DEFAULT_RETRY_SAFEGUARDS = {
+    maxRetryWaitMs: 15000,
+    maxTotalRetryWaitMs: 60000,
+};
+exports.DEFAULT_RISK_WEIGHTING = {
+    governance: 0,
+    usage: 0,
+    dataQuality: 0,
+    mediumThreshold: 6,
+    highThreshold: 12,
+};
 exports.DEFAULT_RISK_THRESHOLDS = {
     dashboardHigh: 5,
     pipelineHigh: 4,
@@ -36322,6 +36473,30 @@ function parsePositiveInt(name, raw) {
     const value = Number.parseInt(raw, 10);
     if (Number.isNaN(value) || value <= 0) {
         throw new types_1.ConfigurationError(`${name} must be a positive integer. Received: ${raw}`);
+    }
+    return value;
+}
+function parseNonNegativeInt(name, raw) {
+    const value = Number.parseInt(raw, 10);
+    if (Number.isNaN(value) || value < 0) {
+        throw new types_1.ConfigurationError(`${name} must be a non-negative integer. Received: ${raw}`);
+    }
+    return value;
+}
+function parseNonNegativeNumber(name, raw) {
+    const value = Number.parseFloat(raw);
+    if (Number.isNaN(value) || value < 0) {
+        throw new types_1.ConfigurationError(`${name} must be a non-negative number. Received: ${raw}`);
+    }
+    return value;
+}
+function parseBoundedPositiveInt(name, raw, min, max) {
+    const value = parsePositiveInt(name, raw);
+    if (value < min || value > max) {
+        const suffix = name === "max-lineage-depth"
+            ? " OpenMetadata lineage API supports a maximum depth of 3 per request."
+            : "";
+        throw new types_1.ConfigurationError(`${name} must be between ${min} and ${max}. Received: ${raw}.${suffix}`);
     }
     return value;
 }
@@ -36372,6 +36547,29 @@ function parseProviderMode(raw) {
     }
     throw new types_1.ConfigurationError(`lineage-provider must be one of api|mcp|auto. Received: ${raw}`);
 }
+function parseOperatingMode(raw) {
+    const mode = raw.trim().toLowerCase();
+    if (mode === "fast" || mode === "balanced" || mode === "strict-governance") {
+        return mode;
+    }
+    throw new types_1.ConfigurationError(`operating-mode must be one of fast|balanced|strict-governance. Received: ${raw}`);
+}
+function parseBooleanInput(name, raw, fallback) {
+    const trimmed = raw.trim().toLowerCase();
+    if (trimmed.length === 0) {
+        return fallback;
+    }
+    if (trimmed === "true") {
+        return true;
+    }
+    if (trimmed === "false") {
+        return false;
+    }
+    throw new types_1.ConfigurationError(`${name} must be true or false. Received: ${raw}`);
+}
+function withPresetIfDefault(value, defaultValue, presetValue) {
+    return value === defaultValue ? presetValue : value;
+}
 function parseRiskThresholds() {
     return {
         dashboardHigh: parsePositiveInt("risk-high-dashboard-count", core.getInput("risk-high-dashboard-count") || String(exports.DEFAULT_RISK_THRESHOLDS.dashboardHigh)),
@@ -36383,6 +36581,23 @@ function parseRiskThresholds() {
         lowConfidenceHigh: parsePositiveInt("risk-high-low-confidence-count", core.getInput("risk-high-low-confidence-count") || String(exports.DEFAULT_RISK_THRESHOLDS.lowConfidenceHigh)),
     };
 }
+function parseRiskWeighting() {
+    const governance = parseNonNegativeNumber("risk-weight-governance", core.getInput("risk-weight-governance") || String(exports.DEFAULT_RISK_WEIGHTING.governance));
+    const usage = parseNonNegativeNumber("risk-weight-usage", core.getInput("risk-weight-usage") || String(exports.DEFAULT_RISK_WEIGHTING.usage));
+    const dataQuality = parseNonNegativeNumber("risk-weight-data-quality", core.getInput("risk-weight-data-quality") || String(exports.DEFAULT_RISK_WEIGHTING.dataQuality));
+    const mediumThreshold = parseNonNegativeNumber("risk-weight-medium-threshold", core.getInput("risk-weight-medium-threshold") || String(exports.DEFAULT_RISK_WEIGHTING.mediumThreshold));
+    const highThreshold = parseNonNegativeNumber("risk-weight-high-threshold", core.getInput("risk-weight-high-threshold") || String(exports.DEFAULT_RISK_WEIGHTING.highThreshold));
+    if (highThreshold < mediumThreshold) {
+        throw new types_1.ConfigurationError("risk-weight-high-threshold must be greater than or equal to risk-weight-medium-threshold.");
+    }
+    return {
+        governance,
+        usage,
+        dataQuality,
+        mediumThreshold,
+        highThreshold,
+    };
+}
 function getConfig() {
     const openMetadataEndpoint = core.getInput("openmetadata-endpoint", {
         required: true,
@@ -36390,6 +36605,8 @@ function getConfig() {
     const authToken = core.getInput("auth-token", { required: true });
     const githubToken = core.getInput("github-token").trim() || process.env.GITHUB_TOKEN?.trim() || "";
     const filePatterns = parsePatterns(core.getInput("file-patterns"));
+    const operatingMode = parseOperatingMode(core.getInput("operating-mode") || exports.DEFAULT_OPERATING_MODE);
+    const preset = OPERATING_MODE_PRESETS[operatingMode];
     const lineageProvider = parseProviderMode(core.getInput("lineage-provider") || "auto");
     const mcpEndpointRaw = core.getInput("mcp-endpoint").trim();
     const aiSummaryEndpointRaw = core.getInput("ai-summary-endpoint").trim();
@@ -36397,26 +36614,48 @@ function getConfig() {
     const allowedEndpointHosts = parseList(core.getInput("allowed-endpoint-hosts")).map((host) => host.toLowerCase());
     const allowInsecureLocalEndpoints = core.getBooleanInput("allow-insecure-local-endpoints");
     const criticalAssetTagsRaw = parseList(core.getInput("critical-asset-tags")).map((tag) => tag.toLowerCase());
+    const parsedMaxLineageDepth = parseBoundedPositiveInt("max-lineage-depth", core.getInput("max-lineage-depth") || String(BASE_RUNTIME_DEFAULTS.maxLineageDepth), 1, exports.OPENMETADATA_MAX_LINEAGE_DEPTH);
+    const parsedMaxConcurrency = parsePositiveInt("max-concurrency", core.getInput("max-concurrency") || String(BASE_RUNTIME_DEFAULTS.maxConcurrency));
+    const parsedMaxTrackedFiles = parsePositiveInt("max-tracked-files", core.getInput("max-tracked-files") || String(BASE_RUNTIME_DEFAULTS.maxTrackedFiles));
+    const parsedMaxEntities = parsePositiveInt("max-entities", core.getInput("max-entities") || String(BASE_RUNTIME_DEFAULTS.maxEntities));
+    const parsedMaxDownstreamAssets = parsePositiveInt("max-downstream-assets", core.getInput("max-downstream-assets") || String(BASE_RUNTIME_DEFAULTS.maxDownstreamAssets));
+    const parsedRequestTimeoutMs = parsePositiveInt("request-timeout-ms", core.getInput("request-timeout-ms") || String(BASE_RUNTIME_DEFAULTS.requestTimeoutMs));
+    const parsedMaxRetries = parseNonNegativeInt("max-retries", core.getInput("max-retries") || String(BASE_RUNTIME_DEFAULTS.maxRetries));
+    const parsedFailOnMissingMetadata = parseBooleanInput("fail-on-missing-metadata", core.getInput("fail-on-missing-metadata"), BASE_RUNTIME_DEFAULTS.failOnMissingMetadata);
+    const parsedStrictSqlParse = parseBooleanInput("strict-sql-parse", core.getInput("strict-sql-parse"), BASE_RUNTIME_DEFAULTS.strictSqlParse);
+    const maxLineageDepth = withPresetIfDefault(parsedMaxLineageDepth, BASE_RUNTIME_DEFAULTS.maxLineageDepth, preset.maxLineageDepth);
+    const maxConcurrency = withPresetIfDefault(parsedMaxConcurrency, BASE_RUNTIME_DEFAULTS.maxConcurrency, preset.maxConcurrency);
+    const maxTrackedFiles = withPresetIfDefault(parsedMaxTrackedFiles, BASE_RUNTIME_DEFAULTS.maxTrackedFiles, preset.maxTrackedFiles);
+    const maxEntities = withPresetIfDefault(parsedMaxEntities, BASE_RUNTIME_DEFAULTS.maxEntities, preset.maxEntities);
+    const maxDownstreamAssets = withPresetIfDefault(parsedMaxDownstreamAssets, BASE_RUNTIME_DEFAULTS.maxDownstreamAssets, preset.maxDownstreamAssets);
+    const requestTimeoutMs = withPresetIfDefault(parsedRequestTimeoutMs, BASE_RUNTIME_DEFAULTS.requestTimeoutMs, preset.requestTimeoutMs);
+    const maxRetries = withPresetIfDefault(parsedMaxRetries, BASE_RUNTIME_DEFAULTS.maxRetries, preset.maxRetries);
+    const failOnMissingMetadata = withPresetIfDefault(parsedFailOnMissingMetadata, BASE_RUNTIME_DEFAULTS.failOnMissingMetadata, preset.failOnMissingMetadata);
+    const strictSqlParse = withPresetIfDefault(parsedStrictSqlParse, BASE_RUNTIME_DEFAULTS.strictSqlParse, preset.strictSqlParse);
     const config = {
         openMetadataEndpoint: openMetadataEndpoint.replace(/\/$/, ""),
         authToken,
         githubToken,
+        operatingMode,
         filePatterns,
         lineageProvider,
-        maxLineageDepth: parsePositiveInt("max-lineage-depth", core.getInput("max-lineage-depth") || "3"),
-        maxConcurrency: parsePositiveInt("max-concurrency", core.getInput("max-concurrency") || "4"),
-        maxTrackedFiles: parsePositiveInt("max-tracked-files", core.getInput("max-tracked-files") || "200"),
-        maxEntities: parsePositiveInt("max-entities", core.getInput("max-entities") || "500"),
-        maxDownstreamAssets: parsePositiveInt("max-downstream-assets", core.getInput("max-downstream-assets") || "2000"),
-        requestTimeoutMs: parsePositiveInt("request-timeout-ms", core.getInput("request-timeout-ms") || "15000"),
-        maxRetries: parsePositiveInt("max-retries", core.getInput("max-retries") || "3"),
-        failOnMissingMetadata: core.getBooleanInput("fail-on-missing-metadata"),
+        maxLineageDepth,
+        maxConcurrency,
+        maxTrackedFiles,
+        maxEntities,
+        maxDownstreamAssets,
+        requestTimeoutMs,
+        maxRetries,
+        maxRetryWaitMs: parseNonNegativeInt("max-retry-wait-ms", core.getInput("max-retry-wait-ms") || String(exports.DEFAULT_RETRY_SAFEGUARDS.maxRetryWaitMs)),
+        maxTotalRetryWaitMs: parseNonNegativeInt("max-total-retry-wait-ms", core.getInput("max-total-retry-wait-ms") || String(exports.DEFAULT_RETRY_SAFEGUARDS.maxTotalRetryWaitMs)),
+        failOnMissingMetadata,
         aiSummaryEnabled: core.getBooleanInput("ai-summary-enabled"),
-        strictSqlParse: core.getBooleanInput("strict-sql-parse"),
+        strictSqlParse,
         criticalAssetTags: criticalAssetTagsRaw.length > 0
             ? criticalAssetTagsRaw
             : exports.DEFAULT_CRITICAL_TAGS.map((tag) => tag.toLowerCase()),
         riskThresholds: parseRiskThresholds(),
+        riskWeighting: parseRiskWeighting(),
         allowedEndpointHosts,
         allowInsecureLocalEndpoints,
         maxCommentAssets: parsePositiveInt("max-comment-assets", core.getInput("max-comment-assets") || "20"),
@@ -36507,6 +36746,18 @@ function truncateSnippet(value, maxLength = 90) {
     }
     return `${compact.slice(0, maxLength - 3)}...`;
 }
+function estimatePatchChangeCount(patch) {
+    let count = 0;
+    for (const line of patch.split("\n")) {
+        if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+            continue;
+        }
+        if (line.startsWith("+") || line.startsWith("-")) {
+            count += 1;
+        }
+    }
+    return count;
+}
 function extractPatchLines(patch) {
     const added = [];
     const removed = [];
@@ -36552,6 +36803,9 @@ class DiffReader {
             path: file.filename,
             status: mapStatus(file.status),
             previousPath: file.previous_filename,
+            additions: file.additions,
+            deletions: file.deletions,
+            changes: file.changes,
             patch: file.patch,
         }));
         (0, logging_1.logInfo)(`Fetched ${mappedFiles.length} changed files from PR #${pullRequest.number}.`);
@@ -36608,7 +36862,12 @@ class DiffReader {
                 hydrated.push(file);
                 continue;
             }
-            const shouldHydrate = !file.patch || file.patch.length < 300;
+            const patch = file.patch;
+            const patchChangeCount = patch ? estimatePatchChangeCount(patch) : 0;
+            const reportedChanges = file.changes ?? 0;
+            const shouldHydrate = !patch ||
+                patch.length < 300 ||
+                (reportedChanges > 0 && patchChangeCount > 0 && patchChangeCount < reportedChanges);
             if (!shouldHydrate) {
                 hydrated.push(file);
                 continue;
@@ -36707,12 +36966,13 @@ async function buildOptionalAiSummary(config, impactSeed) {
 /***/ }),
 
 /***/ 8935:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.computeImpactSummary = computeImpactSummary;
+const warnings_1 = __nccwpck_require__(1456);
 const ORDERED_TYPES = [
     "dashboard",
     "pipeline",
@@ -36744,7 +37004,7 @@ function hasCriticalAsset(byType, criticalTags) {
     }
     return false;
 }
-function computeRisk(byType, warnings, criticalTags, lowConfidenceEntityCount, thresholds) {
+function computeRisk(byType, warnings, criticalTags, lowConfidenceEntityCount, thresholds, riskWeighting) {
     const dashboardCount = byType.dashboard.length;
     const pipelineCount = byType.pipeline.length;
     const reportCount = byType.report.length;
@@ -36752,18 +37012,53 @@ function computeRisk(byType, warnings, criticalTags, lowConfidenceEntityCount, t
     if (hasCriticalAsset(byType, criticalTags)) {
         return "high";
     }
+    let baseRisk = "low";
     if (dashboardCount >= thresholds.dashboardHigh ||
         pipelineCount >= thresholds.pipelineHigh ||
         reportCount >= thresholds.reportHigh ||
         total >= thresholds.totalHigh ||
         (warnings.length >= thresholds.warningCountHigh && total >= thresholds.warningMinAssetsHigh) ||
         lowConfidenceEntityCount >= thresholds.lowConfidenceHigh) {
+        baseRisk = "high";
+    }
+    if (baseRisk !== "high" && (total > 0 || warnings.length > 0)) {
+        baseRisk = "medium";
+    }
+    if (baseRisk === "high") {
+        return baseRisk;
+    }
+    const anyWeightEnabled = riskWeighting.governance > 0 || riskWeighting.usage > 0 || riskWeighting.dataQuality > 0;
+    if (!anyWeightEnabled) {
+        return baseRisk;
+    }
+    const allAssets = Object.values(byType).flat();
+    const normalizedCriticalTags = new Set(criticalTags.map((tag) => tag.toLowerCase()));
+    const missingOwners = allAssets.filter((asset) => (asset.owners ?? []).length === 0).length;
+    const missingDomain = allAssets.filter((asset) => !(asset.domain && asset.domain.length > 0)).length;
+    const criticalTaggedAssets = allAssets.filter((asset) => (asset.tags ?? []).some((tag) => normalizedCriticalTags.has(tag.toLowerCase()))).length;
+    const governanceSignal = missingOwners + missingDomain + criticalTaggedAssets;
+    const usageSignal = dashboardCount * 2 + reportCount + pipelineCount;
+    const dataQualityWarningCodes = new Set([
+        "METADATA_MISSING",
+        "LINEAGE_EMPTY_PAYLOAD",
+        "LINEAGE_UNAVAILABLE",
+        "PARSE_FAILED",
+    ]);
+    const dataQualityWarningCount = warnings.filter((warning) => {
+        const code = (0, warnings_1.extractWarningCode)(warning);
+        return code ? dataQualityWarningCodes.has(code) : false;
+    }).length;
+    const dataQualitySignal = dataQualityWarningCount + lowConfidenceEntityCount;
+    const weightedScore = governanceSignal * riskWeighting.governance +
+        usageSignal * riskWeighting.usage +
+        dataQualitySignal * riskWeighting.dataQuality;
+    if (weightedScore >= riskWeighting.highThreshold) {
         return "high";
     }
-    if (total > 0 || warnings.length > 0) {
+    if (weightedScore >= riskWeighting.mediumThreshold && baseRisk === "low") {
         return "medium";
     }
-    return "low";
+    return baseRisk;
 }
 function buildSuggestions(risk, warnings, byType) {
     const suggestions = [];
@@ -36774,7 +37069,7 @@ function buildSuggestions(risk, warnings, byType) {
     if (risk === "medium") {
         suggestions.push("Validate key downstream assets in staging after merge.");
     }
-    if (warnings.some((warning) => warning.toLowerCase().includes("missing metadata"))) {
+    if (warnings.some((warning) => (0, warnings_1.extractWarningCode)(warning) === "METADATA_MISSING")) {
         suggestions.push("Add or repair missing OpenMetadata entities to improve lineage coverage.");
     }
     if (byType.pipeline.length > 0) {
@@ -36839,7 +37134,7 @@ function computeImpactSummary(input) {
     for (const type of ORDERED_TYPES) {
         byType[type].sort((a, b) => a.name.localeCompare(b.name));
     }
-    const riskLevel = computeRisk(byType, input.warnings, input.criticalAssetTags, input.lowConfidenceEntityCount, input.riskThresholds);
+    const riskLevel = computeRisk(byType, input.warnings, input.criticalAssetTags, input.lowConfidenceEntityCount, input.riskThresholds, input.riskWeighting);
     const impactedAssetCount = Object.values(byType).reduce((sum, assets) => sum + assets.length, 0);
     return {
         riskLevel,
@@ -36859,9 +37154,10 @@ function computeImpactSummary(input) {
 /***/ }),
 
 /***/ 685:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ (function(module, exports, __nccwpck_require__) {
 
 "use strict";
+/* module decorator */ module = __nccwpck_require__.nmd(module);
 
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -36900,6 +37196,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.run = run;
+exports.serializeCompactImpactJsonForOutput = serializeCompactImpactJsonForOutput;
 const core = __importStar(__nccwpck_require__(7484));
 const promises_1 = __nccwpck_require__(1455);
 const node_path_1 = __importDefault(__nccwpck_require__(6760));
@@ -36913,13 +37211,107 @@ const fallbackProvider_1 = __nccwpck_require__(1632);
 const traversal_1 = __nccwpck_require__(1645);
 const classifier_1 = __nccwpck_require__(8935);
 const render_1 = __nccwpck_require__(5035);
+const summary_1 = __nccwpck_require__(5955);
 const publish_1 = __nccwpck_require__(588);
 const aiSummary_1 = __nccwpck_require__(6622);
 const warnings_1 = __nccwpck_require__(1456);
 const OUTPUT_JSON_MAX_ASSETS = 50;
+const MAX_IMPACT_JSON_OUTPUT_BYTES = 900_000;
+function setPrimaryOutputs(outputs) {
+    core.setOutput("risk-level", outputs.riskLevel);
+    core.setOutput("impacted-asset-count", String(outputs.impactedAssetCount));
+    core.setOutput("warning-count", String(outputs.warningCount));
+    core.setOutput("changed-entity-count", String(outputs.changedEntityCount));
+    core.setOutput("low-confidence-entity-count", String(outputs.lowConfidenceEntityCount));
+    core.setOutput("truncated-analysis", String(outputs.truncated));
+}
+function truncateText(value, maxLength) {
+    if (value.length <= maxLength) {
+        return value;
+    }
+    return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+function truncateStringList(values, maxItems, maxItemLength) {
+    return values
+        .slice(0, maxItems)
+        .map((value) => truncateText(value, maxItemLength));
+}
+function truncateSampleAssets(assets, maxItems) {
+    return assets.slice(0, maxItems).map((asset) => ({
+        ...asset,
+        fqn: truncateText(asset.fqn, 220),
+        name: truncateText(asset.name, 180),
+        reasons: truncateStringList(asset.reasons, 3, 220),
+        ...(asset.tags ? { tags: truncateStringList(asset.tags, 8, 80) } : {}),
+        ...(asset.owners ? { owners: truncateStringList(asset.owners, 6, 80) } : {}),
+        ...(asset.domain ? { domain: truncateText(asset.domain, 120) } : {}),
+    }));
+}
+function serializeCompactImpactJsonForOutput(payload, maxBytes = MAX_IMPACT_JSON_OUTPUT_BYTES) {
+    const serialize = (candidate) => JSON.stringify(candidate);
+    const initial = serialize(payload);
+    if (Buffer.byteLength(initial, "utf8") <= maxBytes) {
+        return { json: initial, truncated: false };
+    }
+    const candidates = [
+        { maxWarnings: 120, maxWhatChanged: 30, maxAssets: 30 },
+        { maxWarnings: 80, maxWhatChanged: 20, maxAssets: 20 },
+        { maxWarnings: 40, maxWhatChanged: 12, maxAssets: 10 },
+        { maxWarnings: 20, maxWhatChanged: 6, maxAssets: 0 },
+        { maxWarnings: 0, maxWhatChanged: 0, maxAssets: 0 },
+    ];
+    for (const limits of candidates) {
+        const candidatePayload = {
+            ...payload,
+            warnings: truncateStringList(payload.warnings, limits.maxWarnings, 240),
+            whatChanged: truncateStringList(payload.whatChanged, limits.maxWhatChanged, 220),
+            sampleImpactedAssets: truncateSampleAssets(payload.sampleImpactedAssets, limits.maxAssets),
+            outputTruncated: true,
+        };
+        const json = serialize(candidatePayload);
+        if (Buffer.byteLength(json, "utf8") <= maxBytes) {
+            return { json, truncated: true };
+        }
+    }
+    const minimal = {
+        version: payload.version,
+        generatedAt: payload.generatedAt,
+        analysisStatus: payload.analysisStatus,
+        riskLevel: payload.riskLevel,
+        changedEntityCount: payload.changedEntityCount,
+        lowConfidenceEntityCount: payload.lowConfidenceEntityCount,
+        impactedAssetCount: payload.impactedAssetCount,
+        warningCount: payload.warningCount,
+        warnings: [],
+        warningCodeCounts: payload.warningCodeCounts,
+        truncated: payload.truncated,
+        whatChanged: [],
+        retryObservability: payload.retryObservability,
+        impactedByTypeCounts: payload.impactedByTypeCounts,
+        sampleImpactedAssets: [],
+        outputTruncated: true,
+    };
+    return { json: serialize(minimal), truncated: true };
+}
+async function publishImpactCommentBestEffort(githubToken, prNumber, body) {
+    try {
+        await (0, publish_1.upsertImpactComment)(githubToken, prNumber, body);
+        return undefined;
+    }
+    catch (error) {
+        const asRecord = error;
+        const reason = asRecord.status ? `status ${asRecord.status}` : String(error);
+        (0, logging_1.logError)(`Unable to publish PR impact comment (${reason}). Continuing without failing analysis.`);
+        return (0, warnings_1.formatWarning)("COMMENT_PUBLISH_FAILED", `Unable to publish PR impact comment (${reason}).`);
+    }
+}
 async function writeJobSummary(markdown) {
+    const prepared = (0, summary_1.truncateForStepSummary)(markdown);
+    if (prepared.truncated) {
+        (0, logging_1.logInfo)("Job summary exceeded GitHub step summary limit and was truncated.");
+    }
     await core.summary.clear();
-    await core.summary.addRaw(markdown, true).write();
+    await core.summary.addRaw(prepared.markdown, true).write();
 }
 async function writeImpactJsonFile(filePath, payload) {
     const resolvedPath = node_path_1.default.isAbsolute(filePath)
@@ -36972,6 +37364,7 @@ function buildCompactImpactJson(input) {
         warningCodeCounts: (0, warnings_1.warningCodeCounts)(input.warnings),
         truncated: input.truncated,
         whatChanged: input.whatChanged,
+        retryObservability: input.retryObservability ?? {},
         impactedByTypeCounts,
         sampleImpactedAssets,
     };
@@ -36979,13 +37372,21 @@ function buildCompactImpactJson(input) {
 async function emitStructuredOutputs(config, compactPayload, fullPayload) {
     core.setOutput("analysis-status", compactPayload.analysisStatus);
     core.setOutput("warning-code-counts", JSON.stringify(compactPayload.warningCodeCounts));
-    core.setOutput("impact-json", JSON.stringify(compactPayload));
+    core.setOutput("retry-observability", JSON.stringify(compactPayload.retryObservability));
+    const serializedCompact = serializeCompactImpactJsonForOutput(compactPayload);
+    if (serializedCompact.truncated) {
+        (0, logging_1.logWarning)("impact-json output exceeded safe size budget and was truncated.");
+    }
+    core.setOutput("impact-json", serializedCompact.json);
     if (config.impactJsonFile) {
         const resolvedPath = await writeImpactJsonFile(config.impactJsonFile, fullPayload);
         core.setOutput("impact-json-file", resolvedPath);
         return;
     }
     core.setOutput("impact-json-file", "");
+}
+function collectRetryObservability(provider) {
+    return provider.getObservabilityCounters?.() ?? {};
 }
 function createProvider(config) {
     if (config.lineageProvider === "api") {
@@ -37027,12 +37428,14 @@ async function run() {
         const whatChanged = diffReader.deriveWhatChanged(trackedFiles);
         if (trackedFiles.length === 0) {
             (0, logging_1.logInfo)("No tracked files changed in this pull request. Skipping impact analysis.");
-            core.setOutput("risk-level", "low");
-            core.setOutput("impacted-asset-count", "0");
-            core.setOutput("warning-count", "0");
-            core.setOutput("changed-entity-count", "0");
-            core.setOutput("low-confidence-entity-count", "0");
-            core.setOutput("truncated-analysis", "false");
+            setPrimaryOutputs({
+                riskLevel: "low",
+                impactedAssetCount: 0,
+                warningCount: 0,
+                changedEntityCount: 0,
+                lowConfidenceEntityCount: 0,
+                truncated: false,
+            });
             const compactPayload = buildCompactImpactJson({
                 analysisStatus: "skipped",
                 riskLevel: "low",
@@ -37042,6 +37445,7 @@ async function run() {
                 warnings: [],
                 truncated: false,
                 whatChanged: [],
+                retryObservability: {},
             });
             await emitStructuredOutputs(runtimeConfig, compactPayload, {
                 ...compactPayload,
@@ -37078,14 +37482,24 @@ async function run() {
                 "",
                 "No table or column references were extracted from tracked file changes.",
             ].join("\n");
-            await (0, publish_1.upsertImpactComment)(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
-            core.setOutput("risk-level", "low");
-            core.setOutput("impacted-asset-count", "0");
-            core.setOutput("warning-count", String(extracted.warnings.length + guardrailWarnings.length));
-            core.setOutput("changed-entity-count", "0");
-            core.setOutput("low-confidence-entity-count", String(extracted.lowConfidenceEntityCount));
-            core.setOutput("truncated-analysis", String(truncated));
+            const commentWarning = await (0, logging_1.withLogGroup)("Publish PR comment", async () => {
+                return publishImpactCommentBestEffort(runtimeConfig.githubToken, diff.prNumber, noEntityComment);
+            });
             const branchWarnings = [...guardrailWarnings, ...extracted.warnings];
+            if (commentWarning) {
+                branchWarnings.push(commentWarning);
+            }
+            const noEntityReport = commentWarning
+                ? `${noEntityComment}\n\n### Warnings\n- ${commentWarning}`
+                : noEntityComment;
+            setPrimaryOutputs({
+                riskLevel: "low",
+                impactedAssetCount: 0,
+                warningCount: branchWarnings.length,
+                changedEntityCount: 0,
+                lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
+                truncated,
+            });
             const branchStatus = (0, warnings_1.computeAnalysisStatus)(branchWarnings, truncated);
             const compactPayload = buildCompactImpactJson({
                 analysisStatus: branchStatus,
@@ -37096,12 +37510,13 @@ async function run() {
                 warnings: branchWarnings,
                 truncated,
                 whatChanged,
+                retryObservability: {},
             });
             await emitStructuredOutputs(runtimeConfig, compactPayload, {
                 ...compactPayload,
-                report: noEntityComment,
+                report: noEntityReport,
             });
-            await writeJobSummary(noEntityComment);
+            await writeJobSummary(noEntityReport);
             return;
         }
         const providerConfig = createProvider(runtimeConfig);
@@ -37121,6 +37536,7 @@ async function run() {
             lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
             criticalAssetTags: runtimeConfig.criticalAssetTags,
             riskThresholds: runtimeConfig.riskThresholds,
+            riskWeighting: runtimeConfig.riskWeighting,
             truncated,
             whatChanged,
         });
@@ -37130,20 +37546,21 @@ async function run() {
             impactedAssetCount: preSummary.impactedAssetCount,
             warnings: preSummary.warnings,
         });
-        const finalWarnings = [...preSummary.warnings];
+        let finalWarnings = [...preSummary.warnings];
         if (providerConfig.providerNotice) {
             (0, logging_1.logInfo)(providerConfig.providerNotice);
         }
         if (ai.warning) {
             finalWarnings.push(ai.warning);
         }
-        const finalSummary = (0, classifier_1.computeImpactSummary)({
+        let finalSummary = (0, classifier_1.computeImpactSummary)({
             changedEntities: extracted.entities,
             lineageResults: traversal.lineageResults,
             warnings: finalWarnings,
             lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
             criticalAssetTags: runtimeConfig.criticalAssetTags,
             riskThresholds: runtimeConfig.riskThresholds,
+            riskWeighting: runtimeConfig.riskWeighting,
             truncated,
             whatChanged,
             ...(ai.summary ? { aiSummary: ai.summary } : {}),
@@ -37155,18 +37572,36 @@ async function run() {
             }
         }
         const comment = (0, render_1.renderImpactComment)(finalSummary, runtimeConfig);
-        const detailedReport = (0, render_1.renderDetailedImpactReport)(finalSummary, runtimeConfig);
-        await (0, logging_1.withLogGroup)("Publish PR comment", async () => {
-            await (0, publish_1.upsertImpactComment)(runtimeConfig.githubToken, diff.prNumber, comment);
+        const commentWarning = await (0, logging_1.withLogGroup)("Publish PR comment", async () => {
+            return publishImpactCommentBestEffort(runtimeConfig.githubToken, diff.prNumber, comment);
         });
+        if (commentWarning) {
+            finalWarnings = [...finalWarnings, commentWarning];
+            finalSummary = (0, classifier_1.computeImpactSummary)({
+                changedEntities: extracted.entities,
+                lineageResults: traversal.lineageResults,
+                warnings: finalWarnings,
+                lowConfidenceEntityCount: extracted.lowConfidenceEntityCount,
+                criticalAssetTags: runtimeConfig.criticalAssetTags,
+                riskThresholds: runtimeConfig.riskThresholds,
+                riskWeighting: runtimeConfig.riskWeighting,
+                truncated,
+                whatChanged,
+                ...(ai.summary ? { aiSummary: ai.summary } : {}),
+            });
+        }
+        const detailedReport = (0, render_1.renderDetailedImpactReport)(finalSummary, runtimeConfig);
         await writeJobSummary(detailedReport);
-        core.setOutput("risk-level", finalSummary.riskLevel);
-        core.setOutput("impacted-asset-count", String(finalSummary.impactedAssetCount));
-        core.setOutput("warning-count", String(finalSummary.warnings.length));
-        core.setOutput("changed-entity-count", String(finalSummary.changedEntityCount));
-        core.setOutput("low-confidence-entity-count", String(finalSummary.lowConfidenceEntityCount));
-        core.setOutput("truncated-analysis", String(finalSummary.truncated));
+        setPrimaryOutputs({
+            riskLevel: finalSummary.riskLevel,
+            impactedAssetCount: finalSummary.impactedAssetCount,
+            warningCount: finalSummary.warnings.length,
+            changedEntityCount: finalSummary.changedEntityCount,
+            lowConfidenceEntityCount: finalSummary.lowConfidenceEntityCount,
+            truncated: finalSummary.truncated,
+        });
         const analysisStatus = (0, warnings_1.computeAnalysisStatus)(finalSummary.warnings, finalSummary.truncated);
+        const retryObservability = collectRetryObservability(providerConfig.provider);
         const compactPayload = buildCompactImpactJson({
             analysisStatus,
             riskLevel: finalSummary.riskLevel,
@@ -37176,6 +37611,7 @@ async function run() {
             warnings: finalSummary.warnings,
             truncated: finalSummary.truncated,
             whatChanged: finalSummary.whatChanged,
+            retryObservability,
             impactedByType: finalSummary.impactedByType,
         });
         await emitStructuredOutputs(runtimeConfig, compactPayload, {
@@ -37186,8 +37622,17 @@ async function run() {
     }
     catch (error) {
         (0, logging_1.logError)(`Impact analysis failed: ${String(error)}`);
+        setPrimaryOutputs({
+            riskLevel: "low",
+            impactedAssetCount: 0,
+            warningCount: 0,
+            changedEntityCount: 0,
+            lowConfidenceEntityCount: 0,
+            truncated: false,
+        });
         core.setOutput("analysis-status", "failed");
         core.setOutput("warning-code-counts", "{}");
+        core.setOutput("retry-observability", "{}");
         core.setOutput("impact-json", JSON.stringify({
             version: 1,
             generatedAt: new Date().toISOString(),
@@ -37214,7 +37659,9 @@ async function run() {
         core.setFailed(String(error));
     }
 }
-void run();
+if (__nccwpck_require__.c[__nccwpck_require__.s] === module) {
+    void run();
+}
 //# sourceMappingURL=index.js.map
 
 /***/ }),
@@ -37277,6 +37724,20 @@ class FallbackLineageProvider {
                     `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
                 ])],
         };
+    }
+    getObservabilityCounters() {
+        const merged = {};
+        const addCounters = (prefix, counters) => {
+            if (!counters) {
+                return;
+            }
+            for (const [key, value] of Object.entries(counters)) {
+                merged[`${prefix}.${key}`] = value;
+            }
+        };
+        addCounters("primary", this.primary.getObservabilityCounters?.());
+        addCounters("fallback", this.fallback.getObservabilityCounters?.());
+        return merged;
     }
 }
 exports.FallbackLineageProvider = FallbackLineageProvider;
@@ -37578,19 +38039,36 @@ function parseJsonSafely(text) {
     }
 }
 function buildFqnCandidates(entity) {
-    const candidates = new Set();
-    candidates.add(entity.fqn);
-    candidates.add([entity.database, entity.schema, entity.table].filter(Boolean).join("."));
-    candidates.add([entity.schema, entity.table].filter(Boolean).join("."));
-    candidates.add(entity.table);
-    return [...candidates].filter((candidate) => candidate.length > 0);
+    const candidates = [];
+    const seen = new Set();
+    const add = (value) => {
+        if (!value || value.length === 0 || seen.has(value)) {
+            return;
+        }
+        seen.add(value);
+        candidates.push(value);
+    };
+    const fullFromParts = [entity.database, entity.schema, entity.table].filter(Boolean).join(".");
+    const schemaTable = [entity.schema, entity.table].filter(Boolean).join(".");
+    const fqnWithoutColumn = entity.column && entity.fqn.endsWith(`.${entity.column}`)
+        ? entity.fqn.slice(0, -(`.${entity.column}`).length)
+        : entity.fqn;
+    add(fqnWithoutColumn);
+    if (entity.database && entity.schema) {
+        add(fullFromParts);
+        return candidates;
+    }
+    if (entity.schema) {
+        add(schemaTable);
+        return candidates;
+    }
+    add(entity.table);
+    return candidates;
 }
 function buildLineageEndpoints(base, fqn, depth) {
     const encoded = encodeURIComponent(fqn);
     return [
         `${base}/api/v1/lineage/table/name/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
-        `${base}/api/v1/lineage/table/${encoded}?upstreamDepth=0&downstreamDepth=${depth}`,
-        `${base}/api/v1/lineage?fqn=${encoded}&entityType=table&upstreamDepth=0&downstreamDepth=${depth}`,
     ];
 }
 function warningCodeForStatus(status) {
@@ -37675,6 +38153,13 @@ class OpenMetadataLineageProvider {
     config;
     name = "openmetadata-api";
     cache = new Map();
+    retryObservability = {
+        requests: 0,
+        retryAttempts: 0,
+        totalRetryWaitMs: 0,
+        cappedRetryWaits: 0,
+        retryBudgetExhaustions: 0,
+    };
     constructor(config) {
         this.config = config;
     }
@@ -37694,6 +38179,11 @@ class OpenMetadataLineageProvider {
             throw error;
         }
     }
+    getObservabilityCounters() {
+        return {
+            ...this.retryObservability,
+        };
+    }
     async getDownstreamUncached(entity, depth) {
         const warnings = [];
         const candidates = buildFqnCandidates(entity);
@@ -37710,6 +38200,12 @@ class OpenMetadataLineageProvider {
                 }
                 if (!response.ok) {
                     sawLookupFailure = true;
+                    if (response.retryBudgetExhausted) {
+                        const warning = (0, warnings_1.formatWarning)("RETRY_BUDGET_EXHAUSTED", `Retry wait budget exhausted before lineage request could recover for ${candidate}.`);
+                        warnings.push(warning);
+                        (0, logging_1.logWarning)(warning);
+                        continue;
+                    }
                     const warning = (0, warnings_1.formatWarning)(warningCodeForStatus(response.status), `Lineage request failed (${response.status}) for ${candidate}.`);
                     warnings.push(warning);
                     (0, logging_1.logWarning)(warning);
@@ -37757,6 +38253,28 @@ class OpenMetadataLineageProvider {
     async requestWithRetry(url) {
         let attempt = 0;
         let backoff = 300;
+        let remainingRetryWaitBudgetMs = this.config.maxTotalRetryWaitMs;
+        this.retryObservability.requests += 1;
+        const waitForRetry = async (desiredWaitMs) => {
+            const cappedWaitMs = Math.min(desiredWaitMs, this.config.maxRetryWaitMs);
+            if (cappedWaitMs < desiredWaitMs) {
+                this.retryObservability.cappedRetryWaits += 1;
+            }
+            if (cappedWaitMs === 0) {
+                this.retryObservability.retryAttempts += 1;
+                return true;
+            }
+            if (remainingRetryWaitBudgetMs <= 0) {
+                this.retryObservability.retryBudgetExhaustions += 1;
+                return false;
+            }
+            const waitMs = Math.min(cappedWaitMs, remainingRetryWaitBudgetMs);
+            this.retryObservability.retryAttempts += 1;
+            this.retryObservability.totalRetryWaitMs += waitMs;
+            remainingRetryWaitBudgetMs -= waitMs;
+            await delay(waitMs);
+            return true;
+        };
         while (attempt <= this.config.maxRetries) {
             attempt += 1;
             const controller = new AbortController();
@@ -37774,8 +38292,15 @@ class OpenMetadataLineageProvider {
                 const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
                 const shouldRetry = (response.status === 429 || response.status >= 500) && attempt <= this.config.maxRetries;
                 if (shouldRetry) {
-                    const waitMs = jitterMs(retryAfterMs ?? backoff);
-                    await delay(waitMs);
+                    const canRetry = await waitForRetry(jitterMs(retryAfterMs ?? backoff));
+                    if (!canRetry) {
+                        return {
+                            ok: false,
+                            status: 598,
+                            bodyText: "Lineage request retry budget exhausted.",
+                            retryBudgetExhausted: true,
+                        };
+                    }
                     backoff *= 2;
                     continue;
                 }
@@ -37794,7 +38319,15 @@ class OpenMetadataLineageProvider {
                         bodyText: String(error),
                     };
                 }
-                await delay(jitterMs(backoff));
+                const canRetry = await waitForRetry(jitterMs(backoff));
+                if (!canRetry) {
+                    return {
+                        ok: false,
+                        status: 598,
+                        bodyText: `Lineage request retry budget exhausted after error: ${String(error)}`,
+                        retryBudgetExhausted: true,
+                    };
+                }
                 backoff *= 2;
             }
             finally {
@@ -38108,6 +38641,10 @@ function isDbtLike(path) {
         lower.endsWith("dbt_project.yml") ||
         lower.endsWith("dbt_project.yaml"));
 }
+function isSqlLike(path) {
+    const lower = path.toLowerCase();
+    return lower.endsWith(".sql") || lower.endsWith(".sql.jinja") || lower.endsWith(".jinja");
+}
 function extractEntitiesFromFiles(files) {
     const options = {
         strictSqlParse: false,
@@ -38120,16 +38657,20 @@ function extractEntitiesFromFilesWithOptions(files, options) {
     const warnings = [];
     for (const file of files) {
         try {
-            const lower = file.path.toLowerCase();
             const dbtLike = isDbtLike(file.path);
+            const sqlLike = isSqlLike(file.path);
             if (dbtLike) {
                 parsed.push(...(0, dbtExtractor_1.extractDbtEntities)(file));
             }
-            if (lower.endsWith(".sql") && !dbtLike) {
-                parsed.push(...(0, sqlExtractor_1.extractSqlEntities)(file, { strictMode: options.strictSqlParse }));
+            if (sqlLike) {
+                parsed.push(...(0, sqlExtractor_1.extractSqlEntities)(file, {
+                    strictMode: options.strictSqlParse || dbtLike,
+                }));
             }
             if (isSchemaLike(file.path)) {
-                parsed.push(...(0, schemaExtractor_1.extractSchemaEntities)(file));
+                const extractedSchema = (0, schemaExtractor_1.extractSchemaEntities)(file);
+                parsed.push(...extractedSchema.entities);
+                warnings.push(...extractedSchema.warnings);
             }
         }
         catch (error) {
@@ -38282,6 +38823,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractSchemaEntities = extractSchemaEntities;
 const yaml = __importStar(__nccwpck_require__(4281));
+const warnings_1 = __nccwpck_require__(1456);
 function isSchemaFile(path) {
     const lower = path.toLowerCase();
     return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
@@ -38330,13 +38872,14 @@ function pushTableAndColumns(entities, sourceFile, tableName, schema, columns) {
 }
 function extractSchemaEntities(file) {
     if (!isSchemaFile(file.path)) {
-        return [];
+        return { entities: [], warnings: [] };
     }
     const text = (file.content && file.content.trim().length > 0 ? file.content : cleanPatch(file.patch)).trim();
     if (!text) {
-        return [];
+        return { entities: [], warnings: [] };
     }
     const entities = [];
+    const warnings = [];
     try {
         const document = yaml.load(text);
         for (const model of document?.models ?? []) {
@@ -38352,6 +38895,7 @@ function extractSchemaEntities(file) {
         }
     }
     catch {
+        warnings.push((0, warnings_1.formatWarning)("PARSE_FAILED", `Failed to fully parse schema file ${file.path}; using fallback name-based extraction.`));
         // Fallback heuristic for partial patch fragments.
         const tableMatches = text.matchAll(/\bname:\s*([a-zA-Z0-9_\-.]+)/g);
         for (const match of tableMatches) {
@@ -38375,7 +38919,10 @@ function extractSchemaEntities(file) {
             dedupe.set(key, entity);
         }
     }
-    return [...dedupe.values()];
+    return {
+        entities: [...dedupe.values()],
+        warnings,
+    };
 }
 //# sourceMappingURL=schemaExtractor.js.map
 
@@ -38388,6 +38935,12 @@ function extractSchemaEntities(file) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractSqlEntities = extractSqlEntities;
+function isSqlLikePath(path) {
+    const lower = path.toLowerCase();
+    return (lower.endsWith(".sql") ||
+        lower.endsWith(".sql.jinja") ||
+        lower.endsWith(".jinja"));
+}
 const SQL_TABLE_PATTERN = /\b(?:from|join|into|update|table|view|merge\s+into|delete\s+from|truncate\s+table)\s+([`"\[\]a-zA-Z0-9_.-]+)/gi;
 const SQL_COLUMN_PATTERN = /\b([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_.-]*)\.([`"\[\]a-zA-Z_][`"\[\]a-zA-Z0-9_-]*)\b/g;
 function cleanupIdentifier(raw) {
@@ -38429,7 +38982,7 @@ function splitTableParts(tableRef) {
     };
 }
 function extractSqlEntities(file, options) {
-    if (!file.path.toLowerCase().endsWith(".sql")) {
+    if (!isSqlLikePath(file.path)) {
         return [];
     }
     const searchText = [file.patch ? extractReadablePatch(file.patch) : "", file.content ?? ""]
@@ -38550,6 +39103,8 @@ const KNOWN_WARNING_CODES = new Set([
     "PARSE_FAILED",
     "AI_SUMMARY_FAILED",
     "AI_SUMMARY_FALLBACK",
+    "COMMENT_PUBLISH_FAILED",
+    "RETRY_BUDGET_EXHAUSTED",
     "TRUNCATED_TRACKED_FILES",
     "TRUNCATED_ENTITIES",
     "TRUNCATED_DOWNSTREAM",
@@ -38562,6 +39117,7 @@ const DEGRADED_WARNING_CODES = new Set([
     "SERVICE_UNAVAILABLE",
     "LINEAGE_UNAVAILABLE",
     "MCP_REQUEST_FAILED",
+    "RETRY_BUDGET_EXHAUSTED",
 ]);
 const PARTIAL_WARNING_CODES = new Set([
     "METADATA_MISSING",
@@ -38569,6 +39125,7 @@ const PARTIAL_WARNING_CODES = new Set([
     "PARSE_FAILED",
     "AI_SUMMARY_FAILED",
     "AI_SUMMARY_FALLBACK",
+    "COMMENT_PUBLISH_FAILED",
     "MCP_NOT_CONFIGURED",
     "MCP_PROVIDER_WARNING",
     "TRUNCATED_TRACKED_FILES",
@@ -45540,8 +46097,8 @@ legacyRestEndpointMethods.VERSION = VERSION;
 /******/ 		}
 /******/ 		// Create a new module (and put it into the cache)
 /******/ 		var module = __webpack_module_cache__[moduleId] = {
-/******/ 			// no module.id needed
-/******/ 			// no module.loaded needed
+/******/ 			id: moduleId,
+/******/ 			loaded: false,
 /******/ 			exports: {}
 /******/ 		};
 /******/ 	
@@ -45554,9 +46111,15 @@ legacyRestEndpointMethods.VERSION = VERSION;
 /******/ 			if(threw) delete __webpack_module_cache__[moduleId];
 /******/ 		}
 /******/ 	
+/******/ 		// Flag the module as loaded
+/******/ 		module.loaded = true;
+/******/ 	
 /******/ 		// Return the exports of the module
 /******/ 		return module.exports;
 /******/ 	}
+/******/ 	
+/******/ 	// expose the module cache
+/******/ 	__nccwpck_require__.c = __webpack_module_cache__;
 /******/ 	
 /************************************************************************/
 /******/ 	/* webpack/runtime/define property getters */
@@ -45587,16 +46150,25 @@ legacyRestEndpointMethods.VERSION = VERSION;
 /******/ 		};
 /******/ 	})();
 /******/ 	
+/******/ 	/* webpack/runtime/node module decorator */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.nmd = (module) => {
+/******/ 			module.paths = [];
+/******/ 			if (!module.children) module.children = [];
+/******/ 			return module;
+/******/ 		};
+/******/ 	})();
+/******/ 	
 /******/ 	/* webpack/runtime/compat */
 /******/ 	
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
 /******/ 	
+/******/ 	// module cache are used so entry inlining is disabled
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
-/******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(685);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(__nccwpck_require__.s = 685);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()
