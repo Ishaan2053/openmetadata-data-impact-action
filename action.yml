@@ -31,7 +31,7 @@ inputs:
     required: false
     default: auto
   mcp-endpoint:
-    description: Optional HTTP endpoint for MCP lineage adapter
+    description: OpenMetadata MCP JSON-RPC endpoint (defaults to {openmetadata-endpoint}/mcp)
     required: false
   max-lineage-depth:
     description: Maximum downstream traversal depth (1-3, OpenMetadata API limit)

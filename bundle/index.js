@@ -36706,6 +36706,7 @@ function getConfig() {
     const openMetadataEndpoint = core.getInput("openmetadata-endpoint", {
         required: true,
     });
+    const normalizedOpenMetadataEndpoint = openMetadataEndpoint.replace(/\/$/, "");
     const authToken = core.getInput("auth-token", { required: true });
     const githubToken = core.getInput("github-token").trim() || process.env.GITHUB_TOKEN?.trim() || "";
     const filePatterns = parsePatterns(core.getInput("file-patterns"));
@@ -36737,7 +36738,7 @@ function getConfig() {
     const failOnMissingMetadata = withPresetIfDefault(parsedFailOnMissingMetadata, BASE_RUNTIME_DEFAULTS.failOnMissingMetadata, preset.failOnMissingMetadata);
     const strictSqlParse = withPresetIfDefault(parsedStrictSqlParse, BASE_RUNTIME_DEFAULTS.strictSqlParse, preset.strictSqlParse);
     const config = {
-        openMetadataEndpoint: openMetadataEndpoint.replace(/\/$/, ""),
+        openMetadataEndpoint: normalizedOpenMetadataEndpoint,
         authToken,
         githubToken,
         operatingMode,
@@ -36766,6 +36767,9 @@ function getConfig() {
     };
     if (mcpEndpointRaw.length > 0) {
         config.mcpEndpoint = mcpEndpointRaw;
+    }
+    else {
+        config.mcpEndpoint = `${normalizedOpenMetadataEndpoint}/mcp`;
     }
     if (aiSummaryEndpointRaw.length > 0) {
         config.aiSummaryEndpoint = aiSummaryEndpointRaw;
@@ -37310,7 +37314,7 @@ const logging_1 = __nccwpck_require__(4868);
 const diffReader_1 = __nccwpck_require__(2497);
 const parse_1 = __nccwpck_require__(4849);
 const openmetadataProvider_1 = __nccwpck_require__(6011);
-const mcpProvider_1 = __nccwpck_require__(3354);
+const openmetadataMcpProvider_1 = __nccwpck_require__(8445);
 const fallbackProvider_1 = __nccwpck_require__(1632);
 const traversal_1 = __nccwpck_require__(1645);
 const classifier_1 = __nccwpck_require__(8935);
@@ -37497,14 +37501,14 @@ function createProvider(config) {
         return { provider: new openmetadataProvider_1.OpenMetadataLineageProvider(config) };
     }
     if (config.lineageProvider === "mcp") {
-        return { provider: new mcpProvider_1.McpLineageProvider(config) };
+        return { provider: new openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider(config) };
     }
     if (config.mcpEndpoint) {
-        const mcpProvider = new mcpProvider_1.McpLineageProvider(config);
+        const mcpProvider = new openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider(config);
         const apiProvider = new openmetadataProvider_1.OpenMetadataLineageProvider(config);
         return {
             provider: new fallbackProvider_1.FallbackLineageProvider(mcpProvider, apiProvider),
-            providerNotice: "Auto lineage mode enabled with MCP primary and OpenMetadata API fallback.",
+            providerNotice: "Auto lineage mode enabled with official OpenMetadata MCP primary and OpenMetadata API fallback.",
         };
     }
     return { provider: new openmetadataProvider_1.OpenMetadataLineageProvider(config) };
@@ -37849,14 +37853,20 @@ exports.FallbackLineageProvider = FallbackLineageProvider;
 
 /***/ }),
 
-/***/ 3354:
+/***/ 8445:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.McpLineageProvider = void 0;
+exports.McpLineageProvider = exports.OpenMetadataMcpLineageProvider = void 0;
 const warnings_1 = __nccwpck_require__(1456);
+const MCP_PROTOCOL_VERSION = "2024-11-05";
+const MCP_TOOL_SEARCH_METADATA = "search_metadata";
+const MCP_TOOL_GET_ENTITY_DETAILS = "get_entity_details";
+const MCP_TOOL_GET_ENTITY_LINEAGE = "get_entity_lineage";
+const MAX_SEARCH_LIMIT = 5;
+const MAX_DETAIL_LOOKUPS = 24;
 function normalizeList(values) {
     if (!values || values.length === 0) {
         return undefined;
@@ -37885,13 +37895,246 @@ function mapType(raw) {
     }
     return "other";
 }
-class McpLineageProvider {
+function mapNodeTypeToEntityType(type) {
+    if (type === "dashboard") {
+        return "dashboard";
+    }
+    if (type === "pipeline") {
+        return "pipeline";
+    }
+    if (type === "table" || type === "view") {
+        return "table";
+    }
+    if (type === "topic") {
+        return "topic";
+    }
+    return undefined;
+}
+function asRecord(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+    }
+    return value;
+}
+function asNonEmptyString(value) {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+function parseJsonString(value) {
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        return undefined;
+    }
+}
+function parseJsonBlocks(text) {
+    const parsed = [];
+    const blockRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+    for (const match of text.matchAll(blockRegex)) {
+        const block = match[1]?.trim();
+        if (!block) {
+            continue;
+        }
+        const parsedBlock = parseJsonString(block);
+        if (parsedBlock !== undefined) {
+            parsed.push(parsedBlock);
+        }
+    }
+    return parsed;
+}
+function tryReadTextPayloads(result) {
+    const payloads = [];
+    for (const item of result.content ?? []) {
+        const text = asNonEmptyString(item.text);
+        if (text) {
+            payloads.push(text);
+        }
+    }
+    return payloads;
+}
+function readStructuredCandidates(result) {
+    const candidates = [];
+    if (result.structuredContent !== undefined) {
+        candidates.push(result.structuredContent);
+    }
+    for (const item of result.content ?? []) {
+        if (item.json !== undefined) {
+            candidates.push(item.json);
+        }
+        const text = asNonEmptyString(item.text);
+        if (!text) {
+            continue;
+        }
+        const parsedText = parseJsonString(text);
+        if (parsedText !== undefined) {
+            candidates.push(parsedText);
+        }
+        candidates.push(...parseJsonBlocks(text));
+    }
+    return candidates;
+}
+function readEntityName(input) {
+    if (typeof input === "string") {
+        return input;
+    }
+    const obj = asRecord(input);
+    if (!obj) {
+        return undefined;
+    }
+    return (asNonEmptyString(obj.fullyQualifiedName) ??
+        asNonEmptyString(obj.displayName) ??
+        asNonEmptyString(obj.name));
+}
+function readStringList(input) {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+    const values = [];
+    for (const item of input) {
+        if (typeof item === "string") {
+            values.push(item);
+            continue;
+        }
+        const candidate = readEntityName(item);
+        if (candidate) {
+            values.push(candidate);
+        }
+    }
+    return values;
+}
+function mergeStringLists(left, right) {
+    const merged = [...(left ?? []), ...(right ?? [])];
+    return merged.length > 0 ? [...new Set(merged)] : undefined;
+}
+function readNodeFromUnknown(input, upstreamFrom) {
+    const obj = asRecord(input);
+    if (!obj) {
+        return undefined;
+    }
+    const id = asNonEmptyString(obj.id) ??
+        asNonEmptyString(obj.entityId) ??
+        asNonEmptyString(obj.fullyQualifiedName) ??
+        asNonEmptyString(obj.fqn) ??
+        asNonEmptyString(obj.name);
+    const fqn = asNonEmptyString(obj.fullyQualifiedName) ??
+        asNonEmptyString(obj.fqn) ??
+        asNonEmptyString(obj.name);
+    const name = asNonEmptyString(obj.displayName) ??
+        asNonEmptyString(obj.name) ??
+        asNonEmptyString(obj.fullyQualifiedName) ??
+        asNonEmptyString(obj.fqn);
+    if (!id || !fqn || !name) {
+        return undefined;
+    }
+    const tags = normalizeList(readStringList(obj.tags));
+    const owners = normalizeList(readStringList(obj.owners ?? obj.owner));
+    const glossaryTerms = normalizeList(readStringList(obj.glossaryTerms));
+    const domain = readEntityName(obj.domain)?.toLowerCase();
+    return {
+        id,
+        fqn,
+        name,
+        type: mapType(asNonEmptyString(obj.type) ?? asNonEmptyString(obj.entityType)),
+        url: asNonEmptyString(obj.href) ?? asNonEmptyString(obj.url),
+        upstreamFrom,
+        tags,
+        owners,
+        domain,
+        glossaryTerms,
+    };
+}
+function extractNodesFromText(text, upstreamFrom) {
+    const nodes = [];
+    const seen = new Set();
+    const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+    for (const match of text.matchAll(linkRegex)) {
+        const name = match[1]?.trim();
+        const url = match[2]?.trim();
+        if (!name || !url) {
+            continue;
+        }
+        let fqn;
+        let type = "other";
+        try {
+            const parsed = new URL(url);
+            const pathParts = parsed.pathname.split("/").filter(Boolean);
+            const maybeType = pathParts[pathParts.length - 2];
+            const maybeFqn = pathParts[pathParts.length - 1];
+            if (maybeType) {
+                type = mapType(maybeType);
+            }
+            if (maybeFqn) {
+                fqn = decodeURIComponent(maybeFqn);
+            }
+        }
+        catch {
+            continue;
+        }
+        if (!fqn || seen.has(fqn)) {
+            continue;
+        }
+        seen.add(fqn);
+        nodes.push({
+            id: `${type}:${fqn}`,
+            fqn,
+            name,
+            type,
+            url,
+            upstreamFrom,
+        });
+    }
+    return nodes;
+}
+function normalizeEntityFqn(entity) {
+    if (entity.column && entity.fqn.endsWith(`.${entity.column}`)) {
+        return entity.fqn.slice(0, -(`.${entity.column}`).length);
+    }
+    return entity.fqn;
+}
+function createMcpWarning(status, method) {
+    const warningCode = status === 401 || status === 403 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
+    return (0, warnings_1.formatWarning)(warningCode, `OpenMetadata MCP request '${method}' failed with status ${status}.`);
+}
+class OpenMetadataMcpLineageProvider {
     config;
-    name = "mcp-http-adapter";
+    name = "openmetadata-mcp";
+    initialized = false;
+    availableTools = new Set();
+    requestId = 1;
+    cache = new Map();
+    observability = {
+        requests: 0,
+        initializeCalls: 0,
+        toolListCalls: 0,
+        toolCalls: 0,
+    };
     constructor(config) {
         this.config = config;
     }
+    getObservabilityCounters() {
+        return { ...this.observability };
+    }
     async getDownstream(entity, depth) {
+        const cacheKey = `${entity.fqn}|${depth}`;
+        const cached = this.cache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+        const request = this.getDownstreamUncached(entity, depth);
+        this.cache.set(cacheKey, request);
+        try {
+            return await request;
+        }
+        catch (error) {
+            this.cache.delete(cacheKey);
+            throw error;
+        }
+    }
+    async getDownstreamUncached(entity, depth) {
         if (!this.config.mcpEndpoint) {
             return {
                 sourceEntityFqn: entity.fqn,
@@ -37902,6 +38145,333 @@ class McpLineageProvider {
                 ],
             };
         }
+        const warnings = [];
+        let partial = false;
+        const initialized = await this.initializeSession(warnings);
+        if (!initialized) {
+            partial = true;
+        }
+        if (initialized && !this.availableTools.has(MCP_TOOL_GET_ENTITY_LINEAGE)) {
+            warnings.push((0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", `OpenMetadata MCP server does not expose required tool '${MCP_TOOL_GET_ENTITY_LINEAGE}'.`));
+            return {
+                sourceEntityFqn: entity.fqn,
+                nodes: [],
+                partial: true,
+                warnings,
+            };
+        }
+        const normalizedFqn = normalizeEntityFqn(entity);
+        let nodes = [];
+        const lineageResult = await this.callTool(MCP_TOOL_GET_ENTITY_LINEAGE, {
+            entity_type: "table",
+            fqn: normalizedFqn,
+            upstream_depth: 0,
+            downstream_depth: depth,
+        }, warnings);
+        if (lineageResult) {
+            nodes = this.extractLineageNodes(lineageResult, entity.fqn);
+            if (nodes.length === 0) {
+                const textPayload = tryReadTextPayloads(lineageResult).join("\n").toLowerCase();
+                const indicatesNoDownstream = textPayload.includes("no downstream") ||
+                    textPayload.includes("no affected assets") ||
+                    textPayload.includes("no impacted assets");
+                if (!indicatesNoDownstream && textPayload.length > 0) {
+                    warnings.push((0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", "MCP lineage tool returned content but no parseable downstream nodes."));
+                    partial = true;
+                }
+            }
+        }
+        else {
+            partial = true;
+        }
+        if (nodes.length === 0 && initialized && this.availableTools.has(MCP_TOOL_SEARCH_METADATA)) {
+            const discoveredFqn = await this.discoverEntityFqn(entity, warnings);
+            if (discoveredFqn && discoveredFqn !== normalizedFqn) {
+                const secondAttempt = await this.callTool(MCP_TOOL_GET_ENTITY_LINEAGE, {
+                    entity_type: "table",
+                    fqn: discoveredFqn,
+                    upstream_depth: 0,
+                    downstream_depth: depth,
+                }, warnings);
+                if (secondAttempt) {
+                    nodes = this.extractLineageNodes(secondAttempt, entity.fqn);
+                }
+            }
+        }
+        await this.enrichNodesWithEntityDetails(nodes, warnings);
+        return {
+            sourceEntityFqn: entity.fqn,
+            nodes,
+            partial,
+            warnings: [...new Set(warnings)],
+        };
+    }
+    async initializeSession(warnings) {
+        if (this.initialized) {
+            return true;
+        }
+        this.observability.initializeCalls += 1;
+        const init = await this.callJsonRpc("initialize", {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            capabilities: {
+                tools: {},
+                prompts: {},
+                resources: {
+                    subscribe: false,
+                    listChanged: false,
+                },
+            },
+            clientInfo: {
+                name: "openmetadata-data-impact-action",
+                version: "1.0.0",
+            },
+        });
+        if (!init.ok) {
+            warnings.push(init.warning);
+            return false;
+        }
+        if (init.result.protocolVersion && init.result.protocolVersion !== MCP_PROTOCOL_VERSION) {
+            warnings.push((0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", `MCP protocol version mismatch. Client=${MCP_PROTOCOL_VERSION}, server=${init.result.protocolVersion}.`));
+        }
+        this.observability.toolListCalls += 1;
+        const tools = await this.callJsonRpc("tools/list");
+        if (!tools.ok) {
+            warnings.push(tools.warning);
+            return false;
+        }
+        for (const tool of tools.result.tools ?? []) {
+            const name = asNonEmptyString(tool.name);
+            if (name) {
+                this.availableTools.add(name);
+            }
+        }
+        this.initialized = true;
+        return true;
+    }
+    async callTool(name, argumentsPayload, warnings) {
+        if (this.initialized && this.availableTools.size > 0 && !this.availableTools.has(name)) {
+            warnings.push((0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", `OpenMetadata MCP server does not advertise tool '${name}'.`));
+            return undefined;
+        }
+        this.observability.toolCalls += 1;
+        const outcome = await this.callJsonRpc("tools/call", {
+            name,
+            arguments: argumentsPayload,
+        });
+        if (!outcome.ok) {
+            warnings.push(outcome.warning);
+            return undefined;
+        }
+        return outcome.result;
+    }
+    extractLineageNodes(result, upstreamFrom) {
+        const mapped = new Map();
+        const nodeMapById = new Map();
+        const addNode = (node) => {
+            const existing = mapped.get(node.fqn);
+            if (!existing) {
+                mapped.set(node.fqn, node);
+                nodeMapById.set(node.id, node);
+                return;
+            }
+            mapped.set(node.fqn, {
+                ...existing,
+                ...node,
+                url: existing.url ?? node.url,
+                domain: existing.domain ?? node.domain,
+                tags: mergeStringLists(existing.tags, node.tags),
+                owners: mergeStringLists(existing.owners, node.owners),
+                glossaryTerms: mergeStringLists(existing.glossaryTerms, node.glossaryTerms),
+            });
+        };
+        const parseStructured = (input) => {
+            if (Array.isArray(input)) {
+                for (const item of input) {
+                    parseStructured(item);
+                }
+                return;
+            }
+            const obj = asRecord(input);
+            if (!obj) {
+                return;
+            }
+            const directNode = readNodeFromUnknown(obj, upstreamFrom);
+            if (directNode) {
+                addNode(directNode);
+            }
+            const nodes = Array.isArray(obj.nodes) ? obj.nodes : [];
+            for (const item of nodes) {
+                const parsed = readNodeFromUnknown(item, upstreamFrom);
+                if (parsed) {
+                    addNode(parsed);
+                }
+            }
+            const downstreamNodes = Array.isArray(obj.downstreamNodes) ? obj.downstreamNodes : [];
+            for (const item of downstreamNodes) {
+                const parsed = readNodeFromUnknown(item, upstreamFrom);
+                if (parsed) {
+                    addNode(parsed);
+                }
+            }
+            const downstreamEdges = Array.isArray(obj.downstreamEdges) ? obj.downstreamEdges : [];
+            for (const edge of downstreamEdges) {
+                const edgeObj = asRecord(edge);
+                if (!edgeObj) {
+                    continue;
+                }
+                const toEntity = edgeObj.toEntity;
+                const parsedTo = readNodeFromUnknown(toEntity, upstreamFrom);
+                if (parsedTo) {
+                    addNode(parsedTo);
+                    continue;
+                }
+                if (typeof toEntity === "string") {
+                    const fromMap = nodeMapById.get(toEntity) ?? mapped.get(toEntity);
+                    if (fromMap) {
+                        addNode({ ...fromMap, upstreamFrom });
+                    }
+                }
+            }
+        };
+        for (const candidate of readStructuredCandidates(result)) {
+            parseStructured(candidate);
+        }
+        for (const text of tryReadTextPayloads(result)) {
+            for (const node of extractNodesFromText(text, upstreamFrom)) {
+                addNode(node);
+            }
+        }
+        return [...mapped.values()];
+    }
+    async discoverEntityFqn(entity, warnings) {
+        const query = entity.table || normalizeEntityFqn(entity);
+        const result = await this.callTool(MCP_TOOL_SEARCH_METADATA, {
+            query,
+            entity_type: "table",
+            limit: MAX_SEARCH_LIMIT,
+        }, warnings);
+        if (!result) {
+            return undefined;
+        }
+        const candidates = new Set();
+        const collectFromUnknown = (input) => {
+            if (typeof input === "string") {
+                const fqnRegex = /\b[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+){2,}\b/g;
+                for (const match of input.matchAll(fqnRegex)) {
+                    const candidate = match[0]?.trim();
+                    if (candidate) {
+                        candidates.add(candidate);
+                    }
+                }
+                return;
+            }
+            if (Array.isArray(input)) {
+                for (const item of input) {
+                    collectFromUnknown(item);
+                }
+                return;
+            }
+            const obj = asRecord(input);
+            if (!obj) {
+                return;
+            }
+            for (const [key, value] of Object.entries(obj)) {
+                if (key.toLowerCase().includes("fqn") &&
+                    typeof value === "string" &&
+                    value.includes(".")) {
+                    candidates.add(value);
+                }
+                collectFromUnknown(value);
+            }
+        };
+        for (const candidate of readStructuredCandidates(result)) {
+            collectFromUnknown(candidate);
+        }
+        for (const text of tryReadTextPayloads(result)) {
+            collectFromUnknown(text);
+        }
+        if (candidates.size === 0) {
+            return undefined;
+        }
+        const ordered = [...candidates];
+        const preferred = ordered.find((candidate) => entity.table ? candidate.toLowerCase().endsWith(`.${entity.table.toLowerCase()}`) : false);
+        return preferred ?? ordered[0];
+    }
+    async enrichNodesWithEntityDetails(nodes, warnings) {
+        if (!this.availableTools.has(MCP_TOOL_GET_ENTITY_DETAILS)) {
+            return;
+        }
+        const toEnrich = nodes.slice(0, MAX_DETAIL_LOOKUPS);
+        for (const node of toEnrich) {
+            const entityType = mapNodeTypeToEntityType(node.type);
+            if (!entityType) {
+                continue;
+            }
+            const details = await this.callTool(MCP_TOOL_GET_ENTITY_DETAILS, {
+                entity_type: entityType,
+                fqn: node.fqn,
+            }, warnings);
+            if (!details) {
+                continue;
+            }
+            const structured = readStructuredCandidates(details);
+            const textPayloads = tryReadTextPayloads(details);
+            const tagsFromStructured = [];
+            const ownersFromStructured = [];
+            const termsFromStructured = [];
+            let domainFromStructured;
+            const collectDetails = (input) => {
+                if (Array.isArray(input)) {
+                    for (const item of input) {
+                        collectDetails(item);
+                    }
+                    return;
+                }
+                const obj = asRecord(input);
+                if (!obj) {
+                    return;
+                }
+                tagsFromStructured.push(...readStringList(obj.tags));
+                ownersFromStructured.push(...readStringList(obj.owners ?? obj.owner));
+                termsFromStructured.push(...readStringList(obj.glossaryTerms));
+                domainFromStructured = domainFromStructured ?? readEntityName(obj.domain)?.toLowerCase();
+                for (const value of Object.values(obj)) {
+                    collectDetails(value);
+                }
+            };
+            for (const candidate of structured) {
+                collectDetails(candidate);
+            }
+            const mergedText = textPayloads.join("\n");
+            const markdownFieldValues = (label) => {
+                const regex = new RegExp(`\\*\\*${label}\\*\\*:\\s*([^\\n]+)`, "i");
+                const match = mergedText.match(regex);
+                if (!match || !match[1]) {
+                    return [];
+                }
+                return match[1]
+                    .split(",")
+                    .map((value) => value.replace(/[*`]/g, "").trim())
+                    .filter(Boolean);
+            };
+            const tags = normalizeList([...tagsFromStructured, ...markdownFieldValues("Tags")]);
+            const owners = normalizeList([...ownersFromStructured, ...markdownFieldValues("Owners")]);
+            const glossaryTerms = normalizeList(termsFromStructured);
+            const domain = domainFromStructured;
+            node.tags = mergeStringLists(node.tags, tags);
+            node.owners = mergeStringLists(node.owners, owners);
+            node.glossaryTerms = mergeStringLists(node.glossaryTerms, glossaryTerms);
+            node.domain = node.domain ?? domain;
+        }
+    }
+    async callJsonRpc(method, params) {
+        if (!this.config.mcpEndpoint) {
+            return {
+                ok: false,
+                warning: (0, warnings_1.formatWarning)("MCP_NOT_CONFIGURED", "MCP endpoint is not configured for OpenMetadata MCP integration."),
+            };
+        }
+        this.observability.requests += 1;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
         try {
@@ -37912,73 +38482,39 @@ class McpLineageProvider {
                     Authorization: `Bearer ${this.config.authToken}`,
                 },
                 body: JSON.stringify({
-                    action: "lineage",
-                    entity: {
-                        fqn: entity.fqn,
-                        table: entity.table,
-                        schema: entity.schema,
-                        database: entity.database,
-                        column: entity.column,
-                    },
-                    depth,
+                    jsonrpc: "2.0",
+                    id: this.requestId++,
+                    method,
+                    ...(params ? { params } : {}),
                 }),
                 signal: controller.signal,
             });
             if (!response.ok) {
                 return {
-                    sourceEntityFqn: entity.fqn,
-                    nodes: [],
-                    partial: true,
-                    warnings: [
-                        (0, warnings_1.formatWarning)("MCP_REQUEST_FAILED", `MCP provider request failed with status ${response.status}.`),
-                    ],
+                    ok: false,
+                    warning: createMcpWarning(response.status, method),
                 };
             }
-            const body = (await response.json());
-            const nodes = [];
-            for (const node of body.nodes ?? []) {
-                if (!node.id || !node.fqn || !node.name) {
-                    continue;
-                }
-                const mapped = {
-                    id: node.id,
-                    fqn: node.fqn,
-                    name: node.name,
-                    type: mapType(node.type),
-                    upstreamFrom: entity.fqn,
+            const payload = (await response.json());
+            if (payload.error) {
+                const warningCode = payload.error.code === -32002 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
+                return {
+                    ok: false,
+                    warning: (0, warnings_1.formatWarning)(warningCode, `OpenMetadata MCP '${method}' returned error ${payload.error.code}: ${payload.error.message}.`),
                 };
-                if (node.url) {
-                    mapped.url = node.url;
-                }
-                if (Array.isArray(node.tags) && node.tags.length > 0) {
-                    mapped.tags = normalizeList(node.tags);
-                }
-                if (Array.isArray(node.owners) && node.owners.length > 0) {
-                    mapped.owners = normalizeList(node.owners);
-                }
-                if (Array.isArray(node.glossaryTerms) && node.glossaryTerms.length > 0) {
-                    mapped.glossaryTerms = normalizeList(node.glossaryTerms);
-                }
-                if (typeof node.domain === "string" && node.domain.length > 0) {
-                    mapped.domain = node.domain.toLowerCase();
-                }
-                nodes.push(mapped);
             }
-            return {
-                sourceEntityFqn: entity.fqn,
-                nodes,
-                partial: body.partial ?? false,
-                warnings: (body.warnings ?? []).map((warning) => (0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", warning)),
-            };
+            if (payload.result === undefined) {
+                return {
+                    ok: false,
+                    warning: (0, warnings_1.formatWarning)("MCP_PROVIDER_WARNING", `OpenMetadata MCP '${method}' returned no result payload.`),
+                };
+            }
+            return { ok: true, result: payload.result };
         }
         catch (error) {
             return {
-                sourceEntityFqn: entity.fqn,
-                nodes: [],
-                partial: true,
-                warnings: [
-                    (0, warnings_1.formatWarning)("MCP_REQUEST_FAILED", `MCP provider request failed: ${String(error)}`),
-                ],
+                ok: false,
+                warning: (0, warnings_1.formatWarning)("MCP_REQUEST_FAILED", `OpenMetadata MCP request '${method}' failed: ${String(error)}.`),
             };
         }
         finally {
@@ -37986,8 +38522,9 @@ class McpLineageProvider {
         }
     }
 }
-exports.McpLineageProvider = McpLineageProvider;
-//# sourceMappingURL=mcpProvider.js.map
+exports.OpenMetadataMcpLineageProvider = OpenMetadataMcpLineageProvider;
+exports.McpLineageProvider = OpenMetadataMcpLineageProvider;
+//# sourceMappingURL=openmetadataMcpProvider.js.map
 
 /***/ }),
 
