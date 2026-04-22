@@ -69,6 +69,22 @@ test("getConfig parses optional impact-json-file input", () => {
   assert.equal(config.impactJsonFile, ".artifacts/impact.json");
 });
 
+test("getConfig parses ai summary LLM provider settings", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+    "ai-summary-provider": "openai",
+    "ai-summary-model": "gpt-4.1-mini",
+    "ai-summary-api-key": "sk-test",
+  };
+
+  const config = withMockedInputs(inputMap, { "ai-summary-enabled": true }, () => getConfig());
+  assert.equal(config.aiSummaryProvider, "openai");
+  assert.equal(config.aiSummaryModel, "gpt-4.1-mini");
+  assert.equal(config.aiSummaryApiKey, "sk-test");
+});
+
 test("getConfig defaults mcp-endpoint to openmetadata-endpoint/mcp", () => {
   const inputMap = {
     "openmetadata-endpoint": "https://metadata.example.com",
