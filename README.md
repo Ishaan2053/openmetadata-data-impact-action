@@ -186,7 +186,9 @@ The action exposes the following outputs:
 | `max-total-retry-wait-ms` | no | `60000` | Total retry wait budget per lineage request in ms |
 | `fail-on-missing-metadata` | no | `false` | Fail run if referenced entities are missing in metadata |
 | `ai-summary-enabled` | no | `false` | Enable optional AI summary layer |
-| `ai-summary-endpoint` | no | - | Optional endpoint for external AI summary |
+| `ai-summary-provider` | no | - | LLM provider for AI summary (for example, `openai`, `anthropic`, `google`, `openrouter`) |
+| `ai-summary-model` | no | - | LLM model name for AI summary |
+| `ai-summary-api-key` | no | - | API key for selected AI summary provider (recommended from GitHub Secrets) |
 | `impact-json-file` | no | - | Optional path to write full JSON payload (for artifact upload) |
 | `strict-sql-parse` | no | `false` | Stricter SQL parsing mode |
 | `critical-asset-tags` | no | `tier1,critical,business_critical` | Critical tags that increase risk |
@@ -291,7 +293,6 @@ npm run check
 
 For full local environment setup (OpenMetadata services, self-hosted runner, private-repo action access, and end-to-end PR testing), see [`LOCAL_DEVELOPMENT_ENVIRONMENT.md`](./LOCAL_DEVELOPMENT_ENVIRONMENT.md).
 
-For production handoff documentation (capabilities, prerequisites, configuration, security, CI workflows, and outputs), see [`ACTION_HANDOFF_REFERENCE.md`](./ACTION_HANDOFF_REFERENCE.md).
 
 ## Notes
 
