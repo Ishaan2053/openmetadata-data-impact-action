@@ -77,6 +77,15 @@ inputs:
     description: Enable optional AI summary layer
     required: false
     default: "false"
+  ai-summary-provider:
+    description: LLM provider for AI summary (for example, openai, anthropic, google, openrouter)
+    required: false
+  ai-summary-model:
+    description: LLM model name for AI summary (for example, gpt-4.1-mini, claude-3-5-sonnet-latest)
+    required: false
+  ai-summary-api-key:
+    description: API key for selected AI summary LLM provider (store in GitHub Secrets)
+    required: false
   strict-sql-parse:
     description: Use stricter SQL parsing mode for higher precision
     required: false
@@ -136,9 +145,6 @@ inputs:
     description: Weighted risk score threshold that escalates risk to high
     required: false
     default: "12"
-  ai-summary-endpoint:
-    description: Optional HTTP endpoint for external AI summarization
-    required: false
   impact-json-file:
     description: Optional path to write full structured impact JSON (for artifact upload)
     required: false
