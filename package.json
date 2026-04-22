@@ -1,5 +1,5 @@
 {
-  "name": "node-ts-app",
+  "name": "openmetadata-impact-github-action",
   "version": "1.0.0",
   "description": "",
   "main": "dist/index.js",
@@ -17,8 +17,8 @@
     "check": "npm run lint && npm run typecheck && npm run security:audit && npm run test:coverage && npm run bundle:action"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Ishaan2053",
+  "license": "Apache-2.0",
   "private": true,
   "type": "commonjs",
   "engines": {
