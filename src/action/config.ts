@@ -315,6 +315,7 @@ export function getConfig(): ActionConfig {
   const openMetadataEndpoint = core.getInput("openmetadata-endpoint", {
     required: true,
   });
+  const normalizedOpenMetadataEndpoint = openMetadataEndpoint.replace(/\/$/, "");
   const authToken = core.getInput("auth-token", { required: true });
   const githubToken =
     core.getInput("github-token").trim() || process.env.GITHUB_TOKEN?.trim() || "";
@@ -421,7 +422,7 @@ export function getConfig(): ActionConfig {
   );
 
   const config: ActionConfig = {
-    openMetadataEndpoint: openMetadataEndpoint.replace(/\/$/, ""),
+    openMetadataEndpoint: normalizedOpenMetadataEndpoint,
     authToken,
     githubToken,
     operatingMode,
@@ -461,6 +462,8 @@ export function getConfig(): ActionConfig {
 
   if (mcpEndpointRaw.length > 0) {
     config.mcpEndpoint = mcpEndpointRaw;
+  } else {
+    config.mcpEndpoint = `${normalizedOpenMetadataEndpoint}/mcp`;
   }
 
   if (aiSummaryEndpointRaw.length > 0) {

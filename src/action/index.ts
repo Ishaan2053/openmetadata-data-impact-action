@@ -303,7 +303,7 @@ function createProvider(config: ReturnType<typeof getConfig>): {
     return {
       provider: new FallbackLineageProvider(mcpProvider, apiProvider),
       providerNotice:
-        "Auto lineage mode enabled with MCP primary and OpenMetadata API fallback.",
+        "Auto lineage mode enabled with official OpenMetadata MCP primary and OpenMetadata API fallback.",
     };
   }
 
