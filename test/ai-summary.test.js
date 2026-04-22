@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildOptionalAiSummary } = require("../dist/action/impact/aiSummary.js");
+const {
+  buildOptionalAiSummary,
+  setAiModelFactoryForTests,
+} = require("../dist/action/impact/aiSummary.js");
 
 function createConfig(overrides = {}) {
   return {
@@ -18,6 +21,9 @@ function createConfig(overrides = {}) {
     maxRetries: 2,
     failOnMissingMetadata: false,
     aiSummaryEnabled: false,
+    aiSummaryProvider: "openai",
+    aiSummaryModel: "gpt-4.1-mini",
+    aiSummaryApiKey: "test-key",
     strictSqlParse: false,
     criticalAssetTags: ["critical"],
     allowedEndpointHosts: [],
@@ -36,17 +42,9 @@ function impactSeed() {
   };
 }
 
-function response(status, payload) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => payload,
-  };
-}
-
-test("AI summary returns deterministic fallback when endpoint is missing", async () => {
+test("AI summary returns deterministic fallback when required LLM settings are missing", async () => {
   const result = await buildOptionalAiSummary(
-    createConfig({ aiSummaryEnabled: true, aiSummaryEndpoint: undefined }),
+    createConfig({ aiSummaryEnabled: true, aiSummaryApiKey: undefined }),
     impactSeed(),
   );
 
@@ -54,36 +52,43 @@ test("AI summary returns deterministic fallback when endpoint is missing", async
   assert.ok(result.warning.includes("deterministic fallback"));
 });
 
-test("AI summary returns warning when endpoint responds with non-200", async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => response(503, { message: "down" });
+test("AI summary returns warning when provider completion throws", async () => {
+  setAiModelFactoryForTests(() => ({
+    complete: async () => {
+      throw new Error("provider unavailable");
+    },
+  }));
 
   try {
     const result = await buildOptionalAiSummary(
-      createConfig({ aiSummaryEnabled: true, aiSummaryEndpoint: "https://ai.example.com/summarize" }),
+      createConfig({ aiSummaryEnabled: true }),
       impactSeed(),
     );
 
     assert.equal(result.summary, undefined);
-    assert.ok(result.warning.includes("status 503"));
+    assert.ok(result.warning.includes("provider unavailable"));
   } finally {
-    global.fetch = originalFetch;
+    setAiModelFactoryForTests();
   }
 });
 
 test("AI summary returns summary text on success", async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => response(200, { summary: "Blast radius is concentrated in BI assets." });
+  setAiModelFactoryForTests(() => ({
+    complete: async () => ({
+      type: "text",
+      content: '{"summary":"Blast radius is concentrated in BI assets."}',
+    }),
+  }));
 
   try {
     const result = await buildOptionalAiSummary(
-      createConfig({ aiSummaryEnabled: true, aiSummaryEndpoint: "https://ai.example.com/summarize" }),
+      createConfig({ aiSummaryEnabled: true }),
       impactSeed(),
     );
 
     assert.equal(result.summary, "Blast radius is concentrated in BI assets.");
     assert.equal(result.warning, undefined);
   } finally {
-    global.fetch = originalFetch;
+    setAiModelFactoryForTests();
   }
 });
