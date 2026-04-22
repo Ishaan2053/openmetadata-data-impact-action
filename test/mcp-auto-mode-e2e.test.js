@@ -24,6 +24,7 @@ test("run uses MCP auto mode and falls back to OpenMetadata API when MCP is unav
   const outputs = {};
   let failedMessage = "";
   const requestedUrls = [];
+  const rpcMethods = [];
 
   core.getInput = (name) => {
     if (name === "openmetadata-endpoint") {
@@ -39,7 +40,7 @@ test("run uses MCP auto mode and falls back to OpenMetadata API when MCP is unav
       return "auto";
     }
     if (name === "mcp-endpoint") {
-      return "https://mcp.example.com/lineage";
+      return "https://mcp.example.com/mcp";
     }
     if (name === "max-retries") {
       return "0";
@@ -84,10 +85,19 @@ test("run uses MCP auto mode and falls back to OpenMetadata API when MCP is unav
     requestedUrls.push(target);
 
     if (target.includes("mcp.example.com") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      rpcMethods.push(body.method);
       return {
-        ok: false,
-        status: 503,
-        json: async () => ({}),
+        ok: true,
+        status: 200,
+        json: async () => ({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: {
+            code: -32000,
+            message: "simulated mcp outage",
+          },
+        }),
       };
     }
 
@@ -142,7 +152,8 @@ test("run uses MCP auto mode and falls back to OpenMetadata API when MCP is unav
   }
 
   assert.equal(failedMessage, "");
-  assert.ok(requestedUrls.some((value) => value.includes("mcp.example.com/lineage")));
+  assert.ok(requestedUrls.some((value) => value.includes("mcp.example.com/mcp")));
+  assert.ok(rpcMethods.includes("initialize"));
   assert.ok(requestedUrls.some((value) => value.includes("/api/v1/lineage/table/name/")));
   assert.equal(outputs["risk-level"], "medium");
   assert.equal(outputs["analysis-status"], "degraded");
