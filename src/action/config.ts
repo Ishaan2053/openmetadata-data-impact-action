@@ -324,7 +324,9 @@ export function getConfig(): ActionConfig {
   const preset = OPERATING_MODE_PRESETS[operatingMode];
   const lineageProvider = parseProviderMode(core.getInput("lineage-provider") || "auto");
   const mcpEndpointRaw = core.getInput("mcp-endpoint").trim();
-  const aiSummaryEndpointRaw = core.getInput("ai-summary-endpoint").trim();
+  const aiSummaryProviderRaw = core.getInput("ai-summary-provider").trim().toLowerCase();
+  const aiSummaryModelRaw = core.getInput("ai-summary-model").trim();
+  const aiSummaryApiKeyRaw = core.getInput("ai-summary-api-key").trim();
   const impactJsonFileRaw = core.getInput("impact-json-file").trim();
   const allowedEndpointHosts = parseList(core.getInput("allowed-endpoint-hosts")).map((host) =>
     host.toLowerCase(),
@@ -466,8 +468,16 @@ export function getConfig(): ActionConfig {
     config.mcpEndpoint = `${normalizedOpenMetadataEndpoint}/mcp`;
   }
 
-  if (aiSummaryEndpointRaw.length > 0) {
-    config.aiSummaryEndpoint = aiSummaryEndpointRaw;
+  if (aiSummaryProviderRaw.length > 0) {
+    config.aiSummaryProvider = aiSummaryProviderRaw;
+  }
+
+  if (aiSummaryModelRaw.length > 0) {
+    config.aiSummaryModel = aiSummaryModelRaw;
+  }
+
+  if (aiSummaryApiKeyRaw.length > 0) {
+    config.aiSummaryApiKey = aiSummaryApiKeyRaw;
   }
 
   if (impactJsonFileRaw.length > 0) {
@@ -490,15 +500,6 @@ export function getConfig(): ActionConfig {
     );
   }
 
-  if (config.aiSummaryEndpoint) {
-    validateEndpoint(
-      "ai-summary-endpoint",
-      config.aiSummaryEndpoint,
-      config.allowedEndpointHosts,
-      config.allowInsecureLocalEndpoints,
-    );
-  }
-
   if (githubToken.length === 0) {
     throw new ConfigurationError(
       "github-token input is required when GITHUB_TOKEN is not present in the environment.",
@@ -507,6 +508,9 @@ export function getConfig(): ActionConfig {
 
   core.setSecret(authToken);
   core.setSecret(githubToken);
+  if (config.aiSummaryApiKey) {
+    core.setSecret(config.aiSummaryApiKey);
+  }
 
   return config;
 }

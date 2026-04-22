@@ -53,7 +53,9 @@ export interface ActionConfig {
   maxTotalRetryWaitMs: number;
   failOnMissingMetadata: boolean;
   aiSummaryEnabled: boolean;
-  aiSummaryEndpoint?: string | undefined;
+  aiSummaryProvider?: string | undefined;
+  aiSummaryModel?: string | undefined;
+  aiSummaryApiKey?: string | undefined;
   impactJsonFile?: string | undefined;
   strictSqlParse: boolean;
   criticalAssetTags: string[];
