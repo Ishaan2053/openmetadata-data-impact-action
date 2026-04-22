@@ -69,6 +69,17 @@ test("getConfig parses optional impact-json-file input", () => {
   assert.equal(config.impactJsonFile, ".artifacts/impact.json");
 });
 
+test("getConfig defaults mcp-endpoint to openmetadata-endpoint/mcp", () => {
+  const inputMap = {
+    "openmetadata-endpoint": "https://metadata.example.com",
+    "auth-token": "token",
+    "github-token": "ghs_test",
+  };
+
+  const config = withMockedInputs(inputMap, {}, () => getConfig());
+  assert.equal(config.mcpEndpoint, "https://metadata.example.com/mcp");
+});
+
 test("getConfig rejects max-lineage-depth above documented OpenMetadata limit", () => {
   const inputMap = {
     "openmetadata-endpoint": "https://metadata.example.com",
