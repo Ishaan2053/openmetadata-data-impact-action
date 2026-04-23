@@ -37,6 +37,15 @@ function extractReadablePatch(patch: string): string {
   return lines.join("\n");
 }
 
+function getSearchText(file: ChangedFile): string {
+  const patchText = file.patch ? extractReadablePatch(file.patch).trim() : "";
+  if (patchText.length > 0) {
+    return patchText;
+  }
+
+  return (file.content ?? "").trim();
+}
+
 function splitTableParts(tableRef: string): {
   database?: string | undefined;
   schema?: string | undefined;
@@ -70,9 +79,7 @@ export function extractSqlEntities(file: ChangedFile, options: SqlExtractorOptio
     return [];
   }
 
-  const searchText = [file.patch ? extractReadablePatch(file.patch) : "", file.content ?? ""]
-    .join("\n")
-    .trim();
+  const searchText = getSearchText(file);
 
   if (!searchText) {
     return [];

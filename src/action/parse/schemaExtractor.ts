@@ -49,6 +49,15 @@ function cleanPatch(patch?: string): string {
     .join("\n");
 }
 
+function getParseText(file: ChangedFile): string {
+  const patchText = cleanPatch(file.patch).trim();
+  if (patchText.length > 0) {
+    return patchText;
+  }
+
+  return (file.content ?? "").trim();
+}
+
 function pushTableAndColumns(
   entities: ParsedEntity[],
   sourceFile: string,
@@ -91,12 +100,88 @@ interface SchemaExtractionResult {
   warnings: string[];
 }
 
+function extractFallbackSchemaEntities(text: string, sourceFile: string): ParsedEntity[] {
+  const entities: ParsedEntity[] = [];
+  let activeSection: "models" | "sources" | "tables" | "columns" | undefined;
+  let currentSourceName: string | undefined;
+  let currentSourceIndent: number | undefined;
+
+  const pushEntity = (table: string, schema?: string): void => {
+    entities.push({
+      sourceKind: "schema",
+      sourceFile,
+      rawReference: table,
+      table,
+      schema,
+      confidence: "low",
+    });
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (currentSourceIndent !== undefined && indent <= currentSourceIndent && !trimmed.startsWith("- name:")) {
+      currentSourceName = undefined;
+      currentSourceIndent = undefined;
+    }
+
+    if (/^models:\s*$/i.test(trimmed)) {
+      activeSection = "models";
+      continue;
+    }
+
+    if (/^sources:\s*$/i.test(trimmed)) {
+      activeSection = "sources";
+      currentSourceName = undefined;
+      currentSourceIndent = indent;
+      continue;
+    }
+
+    if (/^tables:\s*$/i.test(trimmed)) {
+      activeSection = "tables";
+      continue;
+    }
+
+    if (/^columns:\s*$/i.test(trimmed)) {
+      activeSection = "columns";
+      continue;
+    }
+
+    const nameMatch = trimmed.match(/^-\s*name:\s*([a-zA-Z0-9_.-]+)\s*$/);
+    if (!nameMatch?.[1]) {
+      continue;
+    }
+
+    const name = nameMatch[1];
+    if (activeSection === "models") {
+      pushEntity(name);
+      continue;
+    }
+
+    if (activeSection === "sources") {
+      currentSourceName = name;
+      currentSourceIndent = indent;
+      continue;
+    }
+
+    if (activeSection === "tables") {
+      pushEntity(name, currentSourceName);
+    }
+  }
+
+  return entities;
+}
+
 export function extractSchemaEntities(file: ChangedFile): SchemaExtractionResult {
   if (!isSchemaFile(file.path)) {
     return { entities: [], warnings: [] };
   }
 
-  const text = (file.content && file.content.trim().length > 0 ? file.content : cleanPatch(file.patch)).trim();
+  const text = getParseText(file);
   if (!text) {
     return { entities: [], warnings: [] };
   }
@@ -128,21 +213,7 @@ export function extractSchemaEntities(file: ChangedFile): SchemaExtractionResult
       ),
     );
 
-    // Fallback heuristic for partial patch fragments.
-    const tableMatches = text.matchAll(/\bname:\s*([a-zA-Z0-9_\-.]+)/g);
-    for (const match of tableMatches) {
-      const name = match[1];
-      if (!name) {
-        continue;
-      }
-      entities.push({
-        sourceKind: "schema",
-        sourceFile: file.path,
-        rawReference: name,
-        table: name,
-        confidence: "low",
-      });
-    }
+    entities.push(...extractFallbackSchemaEntities(text, file.path));
   }
 
   const dedupe = new Map<string, ParsedEntity>();

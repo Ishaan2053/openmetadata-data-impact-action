@@ -44,6 +44,15 @@ function readablePatch(patch?: string): string {
     .join("\n");
 }
 
+function getSearchText(file: ChangedFile): string {
+  const patchText = readablePatch(file.patch).trim();
+  if (patchText.length > 0) {
+    return patchText;
+  }
+
+  return (file.content ?? "").trim();
+}
+
 export function extractDbtEntities(file: ChangedFile): ParsedEntity[] {
   const lowerPath = file.path.toLowerCase();
   const isDbtLike =
@@ -53,7 +62,7 @@ export function extractDbtEntities(file: ChangedFile): ParsedEntity[] {
     return [];
   }
 
-  const text = `${readablePatch(file.patch)}\n${file.content ?? ""}`;
+  const text = getSearchText(file);
   const entities: ParsedEntity[] = [];
   const unique = new Set<string>();
 
