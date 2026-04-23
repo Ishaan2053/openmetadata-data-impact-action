@@ -180,13 +180,19 @@ export class DiffReader {
       const patch = file.patch;
       const patchChangeCount = patch ? estimatePatchChangeCount(patch) : 0;
       const reportedChanges = file.changes ?? 0;
-
-      const shouldHydrate =
-        !patch ||
-        patch.length < 300 ||
-        (reportedChanges > 0 && patchChangeCount > 0 && patchChangeCount < reportedChanges);
+      const patchAppearsIncomplete =
+        Boolean(patch) &&
+        reportedChanges > 0 &&
+        patchChangeCount > 0 &&
+        patchChangeCount < reportedChanges;
+      const shouldHydrate = !patch;
 
       if (!shouldHydrate) {
+        if (patchAppearsIncomplete) {
+          logDebug(
+            `Skipping full-file hydration for ${file.path} because parsing is diff-first even when GitHub patch data appears incomplete.`,
+          );
+        }
         hydrated.push(file);
         continue;
       }
