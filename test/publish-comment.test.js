@@ -101,7 +101,7 @@ test("upsertImpactComment creates new comment when no marker comment exists", as
   );
 });
 
-test("upsertImpactComment falls back to bot-type matching when auth lookup fails", async () => {
+test("upsertImpactComment creates a new comment when auth lookup fails", async () => {
   await withGithubMock(
     {
       authError: true,
@@ -116,9 +116,9 @@ test("upsertImpactComment falls back to bot-type matching when auth lookup fails
     async (calls) => {
       await upsertImpactComment("ghs_test", 789, "replacement");
 
-      assert.equal(calls.update.length, 1);
-      assert.equal(calls.create.length, 0);
-      assert.equal(calls.update[0].comment_id, 77);
+      assert.equal(calls.update.length, 0);
+      assert.equal(calls.create.length, 1);
+      assert.ok(calls.create[0].body.includes("replacement"));
     },
   );
 });

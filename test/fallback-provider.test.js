@@ -63,7 +63,13 @@ test("FallbackLineageProvider merges fallback nodes when primary result is parti
   assert.ok(result.nodes.some((node) => node.fqn === "bi.dashboard.revenue"));
   assert.ok(result.nodes.some((node) => node.fqn === "etl.pipeline.orders_daily"));
   assert.equal(result.partial, true);
-  assert.ok(result.warnings.some((warning) => warning.includes("Auto fallback used fallback")));
+  assert.ok(
+    result.warnings.some(
+      (warning) =>
+        warning.includes("[AUTO_FALLBACK_USED]") &&
+        warning.includes("Auto fallback used fallback"),
+    ),
+  );
 });
 
 test("FallbackLineageProvider does not call fallback when primary is complete", async () => {
