@@ -38,6 +38,14 @@ interface McpToolCallResult {
   structuredContent?: unknown;
 }
 
+interface McpRequestOutcome {
+  ok: boolean;
+  status: number;
+  response?: Response;
+  retryBudgetExhausted?: boolean;
+  transportError?: string;
+}
+
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const MCP_TOOL_SEARCH_METADATA = "search_metadata";
 const MCP_TOOL_GET_ENTITY_DETAILS = "get_entity_details";
@@ -318,7 +326,12 @@ function normalizeEntityFqn(entity: CanonicalEntity): string {
 }
 
 function createMcpWarning(status: number, method: string): string {
-  const warningCode = status === 401 || status === 403 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
+  const warningCode =
+    status === 401 || status === 403
+      ? "AUTH_ERROR"
+      : status === 429
+        ? "RATE_LIMITED"
+        : "MCP_REQUEST_FAILED";
   return formatWarning(
     warningCode,
     `OpenMetadata MCP request '${method}' failed with status ${status}.`,
@@ -333,6 +346,10 @@ export class OpenMetadataMcpLineageProvider implements LineageProvider {
   private readonly cache = new Map<string, Promise<LineageResult>>();
   private readonly observability = {
     requests: 0,
+    retryAttempts: 0,
+    totalRetryWaitMs: 0,
+    cappedRetryWaits: 0,
+    retryBudgetExhaustions: 0,
     initializeCalls: 0,
     toolListCalls: 0,
     toolCalls: 0,
@@ -813,34 +830,35 @@ export class OpenMetadataMcpLineageProvider implements LineageProvider {
       };
     }
 
-    this.observability.requests += 1;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-
-    try {
-      const response = await fetch(this.config.mcpEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.authToken}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: this.requestId++,
-          method,
-          ...(params ? { params } : {}),
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
+    const outcome = await this.requestJsonRpc(method, params);
+    if (!outcome.ok) {
+      if (outcome.retryBudgetExhausted) {
         return {
           ok: false,
-          warning: createMcpWarning(response.status, method),
+          warning: formatWarning(
+            "RETRY_BUDGET_EXHAUSTED",
+            `Retry wait budget exhausted before OpenMetadata MCP '${method}' could recover.`,
+          ),
         };
       }
 
-      const payload = (await response.json()) as McpJsonRpcResponse<T>;
+      if (outcome.transportError) {
+        return {
+          ok: false,
+          warning: formatWarning(
+            "MCP_REQUEST_FAILED",
+            `OpenMetadata MCP request '${method}' failed: ${outcome.transportError}.`,
+          ),
+        };
+      }
+      return {
+        ok: false,
+        warning: createMcpWarning(outcome.status, method),
+      };
+    }
+
+    try {
+      const payload = (await outcome.response!.json()) as McpJsonRpcResponse<T>;
       if (payload.error) {
         const warningCode = payload.error.code === -32002 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
         return {
@@ -871,9 +889,120 @@ export class OpenMetadataMcpLineageProvider implements LineageProvider {
           `OpenMetadata MCP request '${method}' failed: ${String(error)}.`,
         ),
       };
-    } finally {
-      clearTimeout(timer);
     }
+  }
+
+  private async requestJsonRpc(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<McpRequestOutcome> {
+    let attempt = 0;
+    let backoff = 300;
+    let remainingRetryWaitBudgetMs = this.config.maxTotalRetryWaitMs;
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: this.requestId++,
+      method,
+      ...(params ? { params } : {}),
+    });
+
+    const waitForRetry = async (desiredWaitMs: number): Promise<boolean> => {
+      const cappedWaitMs = Math.min(desiredWaitMs, this.config.maxRetryWaitMs);
+      if (cappedWaitMs < desiredWaitMs) {
+        this.observability.cappedRetryWaits += 1;
+      }
+
+      if (cappedWaitMs === 0) {
+        this.observability.retryAttempts += 1;
+        return true;
+      }
+
+      if (remainingRetryWaitBudgetMs <= 0) {
+        this.observability.retryBudgetExhaustions += 1;
+        return false;
+      }
+
+      const waitMs = Math.min(cappedWaitMs, remainingRetryWaitBudgetMs);
+      this.observability.retryAttempts += 1;
+      this.observability.totalRetryWaitMs += waitMs;
+      remainingRetryWaitBudgetMs -= waitMs;
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      return true;
+    };
+
+    while (attempt <= this.config.maxRetries) {
+      attempt += 1;
+      this.observability.requests += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+
+      try {
+        const response = await fetch(this.config.mcpEndpoint!, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.config.authToken}`,
+          },
+          body,
+          signal: controller.signal,
+        });
+
+        const retryAfterHeader = response.headers?.get?.("retry-after") ?? null;
+        const retryAfterSeconds = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : Number.NaN;
+        const retryAfterMs = !Number.isNaN(retryAfterSeconds) && retryAfterSeconds >= 0
+          ? retryAfterSeconds * 1000
+          : (() => {
+              const parsedDate = retryAfterHeader ? Date.parse(retryAfterHeader) : Number.NaN;
+              return Number.isNaN(parsedDate) ? undefined : Math.max(0, parsedDate - Date.now());
+            })();
+        const shouldRetry = (response.status === 429 || response.status >= 500) && attempt <= this.config.maxRetries;
+
+        if (shouldRetry) {
+          const canRetry = await waitForRetry((retryAfterMs ?? backoff) + Math.floor(Math.random() * 250));
+          if (!canRetry) {
+            return {
+              ok: false,
+              status: 598,
+              retryBudgetExhausted: true,
+            };
+          }
+          backoff *= 2;
+          continue;
+        }
+
+        return {
+          ok: response.ok,
+          status: response.status,
+          response,
+        };
+      } catch (error) {
+        if (attempt > this.config.maxRetries) {
+          return {
+            ok: false,
+            status: 599,
+            transportError: String(error),
+          };
+        }
+
+        const canRetry = await waitForRetry(backoff + Math.floor(Math.random() * 250));
+        if (!canRetry) {
+          return {
+            ok: false,
+            status: 598,
+            retryBudgetExhausted: true,
+          };
+        }
+        backoff *= 2;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    return {
+      ok: false,
+      status: 599,
+      transportError: "OpenMetadata MCP request exhausted retries.",
+    };
   }
 }
 

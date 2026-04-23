@@ -1,4 +1,5 @@
 import { CanonicalEntity, LineageNode, LineageResult } from "../types";
+import { formatWarning } from "../warnings";
 import { LineageProvider } from "./provider";
 
 function mergeNodes(primary: LineageNode[], fallback: LineageNode[]): LineageNode[] {
@@ -59,7 +60,10 @@ export class FallbackLineageProvider implements LineageProvider {
       warnings: [...new Set([
         ...primaryResult.warnings,
         ...fallbackResult.warnings,
-        `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
+        formatWarning(
+          "AUTO_FALLBACK_USED",
+          `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
+        ),
       ])],
     };
   }
