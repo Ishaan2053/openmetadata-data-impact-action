@@ -104,7 +104,7 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
       return comment.user?.login === authenticatedLogin;
     }
 
-    return comment.user?.type === "Bot";
+    return false;
   });
 
   if (existing) {
