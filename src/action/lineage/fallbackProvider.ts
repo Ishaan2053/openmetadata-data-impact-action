@@ -1,6 +1,14 @@
 import { CanonicalEntity, LineageNode, LineageResult } from "../types";
+import { extractWarningCode } from "../warnings";
 import { formatWarning } from "../warnings";
 import { LineageProvider } from "./provider";
+
+const STICKY_FALLBACK_CODES = new Set([
+  "AUTH_ERROR",
+  "MCP_NOT_CONFIGURED",
+  "MCP_REQUEST_FAILED",
+  "MCP_PROVIDER_WARNING",
+]);
 
 function mergeNodes(primary: LineageNode[], fallback: LineageNode[]): LineageNode[] {
   const merged = new Map<string, LineageNode>();
@@ -32,6 +40,7 @@ function mergeNodes(primary: LineageNode[], fallback: LineageNode[]): LineageNod
 
 export class FallbackLineageProvider implements LineageProvider {
   readonly name: string;
+  private shouldBypassPrimary = false;
 
   constructor(
     private readonly primary: LineageProvider,
@@ -41,6 +50,22 @@ export class FallbackLineageProvider implements LineageProvider {
   }
 
   async getDownstream(entity: CanonicalEntity, depth: number): Promise<LineageResult> {
+    if (this.shouldBypassPrimary) {
+      const fallbackResult = await this.fallback.getDownstream(entity, depth);
+      return {
+        sourceEntityFqn: entity.fqn,
+        nodes: fallbackResult.nodes,
+        partial: fallbackResult.partial,
+        warnings: [...new Set([
+          ...fallbackResult.warnings,
+          formatWarning(
+            "AUTO_FALLBACK_USED",
+            `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
+          ),
+        ])],
+      };
+    }
+
     const primaryResult = await this.primary.getDownstream(entity, depth);
 
     const shouldFallback =
@@ -49,6 +74,13 @@ export class FallbackLineageProvider implements LineageProvider {
 
     if (!shouldFallback) {
       return primaryResult;
+    }
+
+    if (primaryResult.warnings.some((warning) => {
+      const code = extractWarningCode(warning);
+      return code ? STICKY_FALLBACK_CODES.has(code) : false;
+    })) {
+      this.shouldBypassPrimary = true;
     }
 
     const fallbackResult = await this.fallback.getDownstream(entity, depth);
