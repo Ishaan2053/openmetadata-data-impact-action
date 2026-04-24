@@ -69,16 +69,6 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
   const octokit = github.getOctokit(githubToken);
   const { context } = github;
 
-  let authenticatedLogin: string | undefined;
-  try {
-    const auth = (await withRetry(() => octokit.rest.users.getAuthenticated(), 2)) as {
-      data?: { login?: string };
-    };
-    authenticatedLogin = auth.data?.login;
-  } catch {
-    // Continue without strict ownership check if auth identity cannot be resolved.
-  }
-
   const comments = (await withRetry(
     () =>
       octokit.paginate(octokit.rest.issues.listComments, {
@@ -95,17 +85,8 @@ export async function upsertImpactComment(githubToken: string, prNumber: number,
   }>;
 
   const formattedBody = withMarker(body);
-  const existing = comments.find((comment) => {
-    if (!comment.body?.includes(MARKER)) {
-      return false;
-    }
-
-    if (authenticatedLogin) {
-      return comment.user?.login === authenticatedLogin;
-    }
-
-    return false;
-  });
+  const markerComments = comments.filter((comment) => comment.body?.includes(MARKER));
+  const existing = markerComments.at(-1);
 
   if (existing) {
     await withRetry(

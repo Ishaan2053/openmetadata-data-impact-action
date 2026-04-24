@@ -339,6 +339,13 @@ export function renderDetailedImpactReport(summary: ImpactSummary, config: Actio
 
   renderSummarySection(lines, summary);
 
+  if (summary.aiSummary) {
+    lines.push("### Optional AI Summary");
+    lines.push("");
+    lines.push(sanitizeMultiline(summary.aiSummary));
+    lines.push("");
+  }
+
   const fullConfig: ActionConfig = {
     ...config,
     maxCommentAssets: Number.MAX_SAFE_INTEGER,
@@ -349,6 +356,7 @@ export function renderDetailedImpactReport(summary: ImpactSummary, config: Actio
   lines.push(...renderAssetRows(summary, fullConfig));
 
   renderWarningsSection(lines, summary.warnings);
+  renderSuggestionsSection(lines, summary.suggestions);
 
   return lines.join("\n").trim();
 }
