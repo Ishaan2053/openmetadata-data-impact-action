@@ -9,15 +9,15 @@
 
 **Tags:** `github-action` `openmetadata` `data-lineage` `impact-analysis` `sql` `dbt` `schema` `pull-request` `data-governance` `nodejs` `typescript`
 
-Analyze SQL/dbt/schema changes in pull requests, traverse downstream lineage from OpenMetadata, and publish a production-ready impact report to the PR and GitHub Actions job summary.
+Analyze SQL, dbt model, and dbt YAML property changes in pull requests, traverse downstream lineage from OpenMetadata, and publish a production-ready impact report to the PR and GitHub Actions job summary.
 
 ## What it does
 
 - Detects tracked file changes from the PR diff.
-- Extracts changed entities from SQL, dbt, and schema files.
+- Extracts changed entities from SQL, dbt model SQL, and dbt YAML/property files.
 - Resolves downstream lineage using documented OpenMetadata lineage endpoints (or MCP/auto mode).
 - Uses official OpenMetadata MCP JSON-RPC (`initialize`, `tools/list`, `tools/call`) with `get_entity_lineage`, `search_metadata`, and `get_entity_details` when MCP mode is enabled.
-- Computes risk (`low|medium|high`) using blast-radius and critical-tag rules.
+- Computes risk (`low|medium|high`) using blast-radius, critical-tag rules, and OpenMetadata governance context such as owners and domains.
 - Publishes:
   - PR comment with summary + impacted assets + warnings + suggestions
   - GitHub Actions job summary with full report
@@ -158,11 +158,13 @@ The action exposes the following outputs:
     github-token: ${{ secrets.GITHUB_TOKEN }}
 
 - name: Block risky PRs
-  if: steps.impact.outputs.risk-level == 'high'
+  if: steps.impact.outputs.analysis-status != 'success' || steps.impact.outputs.risk-level == 'high'
   run: |
-    echo "High-risk data impact detected"
+    echo "Impact analysis failed or high-risk data impact detected"
     exit 1
 ```
+
+`analysis-status` should be treated as the primary workflow contract. On `failed`, the action fail-closes by setting `risk-level` to `high`.
 
 ## Inputs (configurable options)
 
@@ -270,7 +272,8 @@ Example artifact upload:
 - Retry/backoff + `Retry-After` support for transient failures.
 - Retry safeguard controls: capped per-attempt wait and total retry wait budget per request.
 - Guardrails for oversized PRs/graphs (`max-tracked-files`, `max-entities`, `max-downstream-assets`).
-- Idempotent PR comment upsert with marker-based ownership checks.
+- Idempotent PR comment upsert using a stable action marker comment.
+- Fail-safe workflow contract: failed analysis reports `analysis-status=failed` and `risk-level=high`.
 
 ## Permissions
 
@@ -291,11 +294,11 @@ npm run check
 
 `npm run check` executes lint, typecheck, security audit, coverage-enforced tests, and bundle build.
 
-For full local environment setup (OpenMetadata services, self-hosted runner, private-repo action access, and end-to-end PR testing), see [`LOCAL_DEVELOPMENT_ENVIRONMENT.md`](./LOCAL_DEVELOPMENT_ENVIRONMENT.md).
+For full local environment setup (OpenMetadata services, self-hosted runner, private-repo action access, and end-to-end PR testing), see [`LOCAL_DEVELOPMENT.md`](./LOCAL_DEVELOPMENT.md).
 
 
 ## Notes
 
 - This action is optimized for pull request workflows.
-- `lineage-provider: auto` uses official OpenMetadata MCP first and falls back to OpenMetadata API.
+- `lineage-provider: auto` uses official OpenMetadata MCP first and falls back to OpenMetadata API, sticking to API fallback for the rest of the run when MCP is clearly unavailable.
 - When `mcp-endpoint` is omitted, the action automatically uses `{openmetadata-endpoint}/mcp`.
