@@ -131,6 +131,11 @@ function computeRisk(
 
 function buildSuggestions(risk: RiskLevel, warnings: string[], byType: Record<AssetType, ImpactedAsset[]>): string[] {
   const suggestions: string[] = [];
+  const allAssets = Object.values(byType).flat();
+  const uniqueOwners = [...new Set(allAssets.flatMap((asset) => asset.owners ?? []))];
+  const uniqueDomains = [...new Set(allAssets.map((asset) => asset.domain).filter(Boolean))] as string[];
+  const criticalAssets = allAssets.filter((asset) => (asset.tags ?? []).some((tag) => tag.includes("critical") || tag.includes("tier")));
+  const criticalOwners = [...new Set(criticalAssets.flatMap((asset) => asset.owners ?? []))];
 
   if (risk === "high") {
     suggestions.push("Coordinate with downstream owners before merging high-impact data changes.");
@@ -145,13 +150,31 @@ function buildSuggestions(risk: RiskLevel, warnings: string[], byType: Record<As
     suggestions.push("Add or repair missing OpenMetadata entities to improve lineage coverage.");
   }
 
+  if (criticalAssets.length > 0) {
+    suggestions.push("Treat impacted critical assets as merge blockers until validation succeeds.");
+  }
+
+  if (criticalOwners.length > 0) {
+    suggestions.push(
+      `Request review from OpenMetadata owners tied to critical impact: ${criticalOwners.slice(0, 3).join(", ")}.`,
+    );
+  } else if (uniqueOwners.length > 0) {
+    suggestions.push(
+      `Request review from OpenMetadata owners of impacted assets: ${uniqueOwners.slice(0, 3).join(", ")}.`,
+    );
+  }
+
+  if (uniqueDomains.length > 0) {
+    suggestions.push(
+      `Validate downstream assets in affected domains: ${uniqueDomains.slice(0, 3).join(", ")}.`,
+    );
+  }
+
   if (byType.pipeline.length > 0) {
     suggestions.push("Check pipeline freshness and SLA alerts for impacted transformations.");
   }
 
-  const assetsWithoutOwners = Object.values(byType)
-    .flat()
-    .filter((asset) => !asset.owners || asset.owners.length === 0).length;
+  const assetsWithoutOwners = allAssets.filter((asset) => !asset.owners || asset.owners.length === 0).length;
   if (assetsWithoutOwners > 0) {
     suggestions.push("Add owner metadata to impacted assets in OpenMetadata for faster incident routing.");
   }
