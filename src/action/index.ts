@@ -569,18 +569,22 @@ export async function run(): Promise<void> {
       `Impact analysis complete. Risk=${finalSummary.riskLevel} impacted=${finalSummary.impactedAssetCount}.`,
     );
   } catch (error) {
+    const failureWarning = formatWarning(
+      "ACTION_FAILED",
+      `Impact analysis failed: ${String(error)}`,
+    );
     logError(`Impact analysis failed: ${String(error)}`);
     setPrimaryOutputs({
-      riskLevel: "low",
+      riskLevel: "high",
       impactedAssetCount: 0,
-      warningCount: 0,
+      warningCount: 1,
       changedEntityCount: 0,
       lowConfidenceEntityCount: 0,
       truncated: false,
     });
 
     core.setOutput("analysis-status", "failed");
-    core.setOutput("warning-code-counts", "{}");
+    core.setOutput("warning-code-counts", JSON.stringify({ ACTION_FAILED: 1 }));
     core.setOutput("retry-observability", "{}");
     core.setOutput(
       "impact-json",
@@ -588,6 +592,12 @@ export async function run(): Promise<void> {
         version: 1,
         generatedAt: new Date().toISOString(),
         analysisStatus: "failed",
+        riskLevel: "high",
+        warningCount: 1,
+        warnings: [failureWarning],
+        warningCodeCounts: {
+          ACTION_FAILED: 1,
+        },
         error: String(error),
       }),
     );
@@ -597,6 +607,12 @@ export async function run(): Promise<void> {
           version: 1,
           generatedAt: new Date().toISOString(),
           analysisStatus: "failed",
+          riskLevel: "high",
+          warningCount: 1,
+          warnings: [failureWarning],
+          warningCodeCounts: {
+            ACTION_FAILED: 1,
+          },
           error: String(error),
         });
         core.setOutput("impact-json-file", resolvedPath);

@@ -118313,14 +118313,6 @@ function withMarker(body) {
 async function upsertImpactComment(githubToken, prNumber, body) {
     const octokit = github.getOctokit(githubToken);
     const { context } = github;
-    let authenticatedLogin;
-    try {
-        const auth = (await withRetry(() => octokit.rest.users.getAuthenticated(), 2));
-        authenticatedLogin = auth.data?.login;
-    }
-    catch {
-        // Continue without strict ownership check if auth identity cannot be resolved.
-    }
     const comments = (await withRetry(() => octokit.paginate(octokit.rest.issues.listComments, {
         owner: context.repo.owner,
         repo: context.repo.repo,
@@ -118328,15 +118320,8 @@ async function upsertImpactComment(githubToken, prNumber, body) {
         per_page: 100,
     }), 2));
     const formattedBody = withMarker(body);
-    const existing = comments.find((comment) => {
-        if (!comment.body?.includes(MARKER)) {
-            return false;
-        }
-        if (authenticatedLogin) {
-            return comment.user?.login === authenticatedLogin;
-        }
-        return false;
-    });
+    const markerComments = comments.filter((comment) => comment.body?.includes(MARKER));
+    const existing = markerComments.at(-1);
     if (existing) {
         await withRetry(() => octokit.rest.issues.updateComment({
             owner: context.repo.owner,
@@ -118645,6 +118630,12 @@ function renderDetailedImpactReport(summary, config) {
     const whatChanged = summary.whatChanged ?? [];
     renderWhatChangedSection(lines, whatChanged);
     renderSummarySection(lines, summary);
+    if (summary.aiSummary) {
+        lines.push("### Optional AI Summary");
+        lines.push("");
+        lines.push(sanitizeMultiline(summary.aiSummary));
+        lines.push("");
+    }
     const fullConfig = {
         ...config,
         maxCommentAssets: Number.MAX_SAFE_INTEGER,
@@ -118653,6 +118644,7 @@ function renderDetailedImpactReport(summary, config) {
     lines.push("");
     lines.push(...renderAssetRows(summary, fullConfig));
     renderWarningsSection(lines, summary.warnings);
+    renderSuggestionsSection(lines, summary.suggestions);
     return lines.join("\n").trim();
 }
 //# sourceMappingURL=render.js.map
@@ -119502,6 +119494,11 @@ function computeRisk(byType, warnings, criticalTags, lowConfidenceEntityCount, t
 }
 function buildSuggestions(risk, warnings, byType) {
     const suggestions = [];
+    const allAssets = Object.values(byType).flat();
+    const uniqueOwners = [...new Set(allAssets.flatMap((asset) => asset.owners ?? []))];
+    const uniqueDomains = [...new Set(allAssets.map((asset) => asset.domain).filter(Boolean))];
+    const criticalAssets = allAssets.filter((asset) => (asset.tags ?? []).some((tag) => tag.includes("critical") || tag.includes("tier")));
+    const criticalOwners = [...new Set(criticalAssets.flatMap((asset) => asset.owners ?? []))];
     if (risk === "high") {
         suggestions.push("Coordinate with downstream owners before merging high-impact data changes.");
         suggestions.push("Schedule a post-merge validation run for affected pipelines and dashboards.");
@@ -119512,12 +119509,22 @@ function buildSuggestions(risk, warnings, byType) {
     if (warnings.some((warning) => (0, warnings_1.extractWarningCode)(warning) === "METADATA_MISSING")) {
         suggestions.push("Add or repair missing OpenMetadata entities to improve lineage coverage.");
     }
+    if (criticalAssets.length > 0) {
+        suggestions.push("Treat impacted critical assets as merge blockers until validation succeeds.");
+    }
+    if (criticalOwners.length > 0) {
+        suggestions.push(`Request review from OpenMetadata owners tied to critical impact: ${criticalOwners.slice(0, 3).join(", ")}.`);
+    }
+    else if (uniqueOwners.length > 0) {
+        suggestions.push(`Request review from OpenMetadata owners of impacted assets: ${uniqueOwners.slice(0, 3).join(", ")}.`);
+    }
+    if (uniqueDomains.length > 0) {
+        suggestions.push(`Validate downstream assets in affected domains: ${uniqueDomains.slice(0, 3).join(", ")}.`);
+    }
     if (byType.pipeline.length > 0) {
         suggestions.push("Check pipeline freshness and SLA alerts for impacted transformations.");
     }
-    const assetsWithoutOwners = Object.values(byType)
-        .flat()
-        .filter((asset) => !asset.owners || asset.owners.length === 0).length;
+    const assetsWithoutOwners = allAssets.filter((asset) => !asset.owners || asset.owners.length === 0).length;
     if (assetsWithoutOwners > 0) {
         suggestions.push("Add owner metadata to impacted assets in OpenMetadata for faster incident routing.");
     }
@@ -119646,7 +119653,7 @@ const logging_1 = __nccwpck_require__(74868);
 const diffReader_1 = __nccwpck_require__(62497);
 const parse_1 = __nccwpck_require__(54849);
 const openmetadataProvider_1 = __nccwpck_require__(46011);
-const openmetadataMcpProvider_1 = __nccwpck_require__(18445);
+const mcpProvider_1 = __nccwpck_require__(43354);
 const fallbackProvider_1 = __nccwpck_require__(71632);
 const traversal_1 = __nccwpck_require__(1645);
 const classifier_1 = __nccwpck_require__(48935);
@@ -119833,14 +119840,14 @@ function createProvider(config) {
         return { provider: new openmetadataProvider_1.OpenMetadataLineageProvider(config) };
     }
     if (config.lineageProvider === "mcp") {
-        return { provider: new openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider(config) };
+        return { provider: new mcpProvider_1.McpLineageProvider(config) };
     }
     if (config.mcpEndpoint) {
-        const mcpProvider = new openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider(config);
+        const mcpProvider = new mcpProvider_1.McpLineageProvider(config);
         const apiProvider = new openmetadataProvider_1.OpenMetadataLineageProvider(config);
         return {
             provider: new fallbackProvider_1.FallbackLineageProvider(mcpProvider, apiProvider),
-            providerNotice: "Auto lineage mode enabled with official OpenMetadata MCP primary and OpenMetadata API fallback.",
+            providerNotice: "Auto lineage mode enabled with MCP primary and OpenMetadata API fallback.",
         };
     }
     return { provider: new openmetadataProvider_1.OpenMetadataLineageProvider(config) };
@@ -120061,22 +120068,29 @@ async function run() {
         (0, logging_1.logInfo)(`Impact analysis complete. Risk=${finalSummary.riskLevel} impacted=${finalSummary.impactedAssetCount}.`);
     }
     catch (error) {
+        const failureWarning = (0, warnings_1.formatWarning)("ACTION_FAILED", `Impact analysis failed: ${String(error)}`);
         (0, logging_1.logError)(`Impact analysis failed: ${String(error)}`);
         setPrimaryOutputs({
-            riskLevel: "low",
+            riskLevel: "high",
             impactedAssetCount: 0,
-            warningCount: 0,
+            warningCount: 1,
             changedEntityCount: 0,
             lowConfidenceEntityCount: 0,
             truncated: false,
         });
         core.setOutput("analysis-status", "failed");
-        core.setOutput("warning-code-counts", "{}");
+        core.setOutput("warning-code-counts", JSON.stringify({ ACTION_FAILED: 1 }));
         core.setOutput("retry-observability", "{}");
         core.setOutput("impact-json", JSON.stringify({
             version: 1,
             generatedAt: new Date().toISOString(),
             analysisStatus: "failed",
+            riskLevel: "high",
+            warningCount: 1,
+            warnings: [failureWarning],
+            warningCodeCounts: {
+                ACTION_FAILED: 1,
+            },
             error: String(error),
         }));
         if (config?.impactJsonFile) {
@@ -120085,6 +120099,12 @@ async function run() {
                     version: 1,
                     generatedAt: new Date().toISOString(),
                     analysisStatus: "failed",
+                    riskLevel: "high",
+                    warningCount: 1,
+                    warnings: [failureWarning],
+                    warningCodeCounts: {
+                        ACTION_FAILED: 1,
+                    },
                     error: String(error),
                 });
                 core.setOutput("impact-json-file", resolvedPath);
@@ -120114,6 +120134,13 @@ if (__nccwpck_require__.c[__nccwpck_require__.s] === module) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FallbackLineageProvider = void 0;
 const warnings_1 = __nccwpck_require__(11456);
+const warnings_2 = __nccwpck_require__(11456);
+const STICKY_FALLBACK_CODES = new Set([
+    "AUTH_ERROR",
+    "MCP_NOT_CONFIGURED",
+    "MCP_REQUEST_FAILED",
+    "MCP_PROVIDER_WARNING",
+]);
 function mergeNodes(primary, fallback) {
     const merged = new Map();
     for (const node of [...primary, ...fallback]) {
@@ -120141,17 +120168,36 @@ class FallbackLineageProvider {
     primary;
     fallback;
     name;
+    shouldBypassPrimary = false;
     constructor(primary, fallback) {
         this.primary = primary;
         this.fallback = fallback;
         this.name = `${primary.name}->${fallback.name}`;
     }
     async getDownstream(entity, depth) {
+        if (this.shouldBypassPrimary) {
+            const fallbackResult = await this.fallback.getDownstream(entity, depth);
+            return {
+                sourceEntityFqn: entity.fqn,
+                nodes: fallbackResult.nodes,
+                partial: fallbackResult.partial,
+                warnings: [...new Set([
+                        ...fallbackResult.warnings,
+                        (0, warnings_2.formatWarning)("AUTO_FALLBACK_USED", `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`),
+                    ])],
+            };
+        }
         const primaryResult = await this.primary.getDownstream(entity, depth);
         const shouldFallback = primaryResult.partial ||
             (primaryResult.nodes.length === 0 && primaryResult.warnings.length > 0);
         if (!shouldFallback) {
             return primaryResult;
+        }
+        if (primaryResult.warnings.some((warning) => {
+            const code = (0, warnings_1.extractWarningCode)(warning);
+            return code ? STICKY_FALLBACK_CODES.has(code) : false;
+        })) {
+            this.shouldBypassPrimary = true;
         }
         const fallbackResult = await this.fallback.getDownstream(entity, depth);
         const mergedNodes = mergeNodes(primaryResult.nodes, fallbackResult.nodes);
@@ -120162,7 +120208,7 @@ class FallbackLineageProvider {
             warnings: [...new Set([
                     ...primaryResult.warnings,
                     ...fallbackResult.warnings,
-                    (0, warnings_1.formatWarning)("AUTO_FALLBACK_USED", `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`),
+                    (0, warnings_2.formatWarning)("AUTO_FALLBACK_USED", `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`),
                 ])],
         };
     }
@@ -120183,6 +120229,20 @@ class FallbackLineageProvider {
 }
 exports.FallbackLineageProvider = FallbackLineageProvider;
 //# sourceMappingURL=fallbackProvider.js.map
+
+/***/ }),
+
+/***/ 43354:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.McpLineageProvider = exports.OpenMetadataMcpLineageProvider = void 0;
+var openmetadataMcpProvider_1 = __nccwpck_require__(18445);
+Object.defineProperty(exports, "OpenMetadataMcpLineageProvider", ({ enumerable: true, get: function () { return openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider; } }));
+Object.defineProperty(exports, "McpLineageProvider", ({ enumerable: true, get: function () { return openmetadataMcpProvider_1.OpenMetadataMcpLineageProvider; } }));
+//# sourceMappingURL=mcpProvider.js.map
 
 /***/ }),
 
@@ -121713,8 +121773,14 @@ const dbtExtractor_1 = __nccwpck_require__(26195);
 const schemaExtractor_1 = __nccwpck_require__(776);
 const normalize_1 = __nccwpck_require__(32258);
 function isSchemaLike(path) {
-    const lower = path.toLowerCase();
-    return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
+    const normalized = path.replace(/\\/g, "/").toLowerCase();
+    const isYaml = normalized.endsWith(".yml") || normalized.endsWith(".yaml");
+    const inModelsDir = normalized.startsWith("models/") || normalized.includes("/models/");
+    const schemaNamed = normalized.endsWith("schema.yml") ||
+        normalized.endsWith("schema.yaml") ||
+        normalized.endsWith(".schema.yml") ||
+        normalized.endsWith(".schema.yaml");
+    return isYaml && (schemaNamed || inModelsDir) && !normalized.endsWith("dbt_project.yml") && !normalized.endsWith("dbt_project.yaml");
 }
 function isDbtLike(path) {
     const lower = path.replace(/\\/g, "/").toLowerCase();
@@ -121907,8 +121973,14 @@ exports.extractSchemaEntities = extractSchemaEntities;
 const yaml = __importStar(__nccwpck_require__(74281));
 const warnings_1 = __nccwpck_require__(11456);
 function isSchemaFile(path) {
-    const lower = path.toLowerCase();
-    return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
+    const normalized = path.replace(/\\/g, "/").toLowerCase();
+    const isYaml = normalized.endsWith(".yml") || normalized.endsWith(".yaml");
+    const inModelsDir = normalized.startsWith("models/") || normalized.includes("/models/");
+    const schemaNamed = normalized.endsWith("schema.yml") ||
+        normalized.endsWith("schema.yaml") ||
+        normalized.endsWith(".schema.yml") ||
+        normalized.endsWith(".schema.yaml");
+    return isYaml && (schemaNamed || inModelsDir) && !normalized.endsWith("dbt_project.yml") && !normalized.endsWith("dbt_project.yaml");
 }
 function cleanPatch(patch) {
     if (!patch) {
@@ -122033,17 +122105,19 @@ function extractSchemaEntities(file) {
     const entities = [];
     const warnings = [];
     try {
-        const document = yaml.load(text);
-        for (const model of document?.models ?? []) {
-            pushTableAndColumns(entities, file.path, model.name, undefined, model.columns);
-        }
-        for (const source of document?.sources ?? []) {
-            for (const table of source.tables ?? []) {
-                pushTableAndColumns(entities, file.path, table.name, source.name, table.columns);
+        const documents = yaml.loadAll(text);
+        for (const document of documents) {
+            for (const model of document?.models ?? []) {
+                pushTableAndColumns(entities, file.path, model.name, undefined, model.columns);
             }
-        }
-        for (const table of document?.tables ?? []) {
-            pushTableAndColumns(entities, file.path, table.name, undefined, table.columns);
+            for (const source of document?.sources ?? []) {
+                for (const table of source.tables ?? []) {
+                    pushTableAndColumns(entities, file.path, table.name, source.name, table.columns);
+                }
+            }
+            for (const table of document?.tables ?? []) {
+                pushTableAndColumns(entities, file.path, table.name, undefined, table.columns);
+            }
         }
     }
     catch {
@@ -122232,6 +122306,7 @@ exports.warningCodeCounts = warningCodeCounts;
 exports.extractWarningCodes = extractWarningCodes;
 exports.computeAnalysisStatus = computeAnalysisStatus;
 const KNOWN_WARNING_CODES = new Set([
+    "ACTION_FAILED",
     "METADATA_MISSING",
     "LINEAGE_EMPTY_PAYLOAD",
     "LINEAGE_REQUEST_FAILED",
@@ -122255,6 +122330,7 @@ const KNOWN_WARNING_CODES = new Set([
 ]);
 const WARNING_PREFIX = /^\[([A-Z0-9_]+)\]\s*/;
 const DEGRADED_WARNING_CODES = new Set([
+    "ACTION_FAILED",
     "AUTH_ERROR",
     "RATE_LIMITED",
     "NETWORK_ERROR",

@@ -1,4 +1,5 @@
 export type WarningCode =
+  | "ACTION_FAILED"
   | "METADATA_MISSING"
   | "LINEAGE_EMPTY_PAYLOAD"
   | "LINEAGE_REQUEST_FAILED"
@@ -23,6 +24,7 @@ export type WarningCode =
 export type AnalysisStatus = "success" | "partial" | "degraded" | "skipped" | "failed";
 
 const KNOWN_WARNING_CODES = new Set<WarningCode>([
+  "ACTION_FAILED",
   "METADATA_MISSING",
   "LINEAGE_EMPTY_PAYLOAD",
   "LINEAGE_REQUEST_FAILED",
@@ -48,6 +50,7 @@ const KNOWN_WARNING_CODES = new Set<WarningCode>([
 const WARNING_PREFIX = /^\[([A-Z0-9_]+)\]\s*/;
 
 const DEGRADED_WARNING_CODES = new Set<WarningCode>([
+  "ACTION_FAILED",
   "AUTH_ERROR",
   "RATE_LIMITED",
   "NETWORK_ERROR",
