@@ -45,13 +45,16 @@ test("run emits stable baseline outputs when execution fails early", async () =>
   }
 
   assert.equal(outputs["analysis-status"], "failed");
-  assert.equal(outputs["risk-level"], "low");
+  assert.equal(outputs["risk-level"], "high");
   assert.equal(outputs["impacted-asset-count"], "0");
-  assert.equal(outputs["warning-count"], "0");
+  assert.equal(outputs["warning-count"], "1");
   assert.equal(outputs["changed-entity-count"], "0");
   assert.equal(outputs["low-confidence-entity-count"], "0");
   assert.equal(outputs["truncated-analysis"], "false");
+  assert.equal(outputs["warning-code-counts"], '{"ACTION_FAILED":1}');
   assert.equal(outputs["impact-json-file"], "");
   assert.ok(typeof outputs["impact-json"] === "string" && outputs["impact-json"].includes('"analysisStatus":"failed"'));
+  assert.ok(outputs["impact-json"].includes('"riskLevel":"high"'));
+  assert.ok(outputs["impact-json"].includes('ACTION_FAILED'));
   assert.ok(failedMessage.includes("openmetadata-endpoint"));
 });

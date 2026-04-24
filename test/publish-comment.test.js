@@ -16,14 +16,6 @@ async function withGithubMock(mockOptions, fn) {
 
   const octokit = {
     rest: {
-      users: {
-        getAuthenticated: async () => {
-          if (mockOptions.authError) {
-            throw Object.assign(new Error("auth failed"), { status: 401 });
-          }
-          return { data: { login: mockOptions.authLogin ?? "impact-bot" } };
-        },
-      },
       issues: {
         updateComment: async (payload) => {
           calls.update.push(payload);
@@ -57,7 +49,6 @@ async function withGithubMock(mockOptions, fn) {
 test("upsertImpactComment updates existing authored marker comment", async () => {
   await withGithubMock(
     {
-      authLogin: "impact-bot",
       comments: [
         {
           id: 42,
@@ -81,7 +72,6 @@ test("upsertImpactComment updates existing authored marker comment", async () =>
 test("upsertImpactComment creates new comment when no marker comment exists", async () => {
   await withGithubMock(
     {
-      authLogin: "impact-bot",
       comments: [
         {
           id: 99,
@@ -101,24 +91,29 @@ test("upsertImpactComment creates new comment when no marker comment exists", as
   );
 });
 
-test("upsertImpactComment creates a new comment when auth lookup fails", async () => {
+test("upsertImpactComment updates the latest marker comment without requiring auth lookup", async () => {
   await withGithubMock(
     {
-      authError: true,
       comments: [
         {
           id: 77,
           body: `${MARKER}\nexisting`,
           user: { login: "some-bot", type: "Bot" },
         },
+        {
+          id: 88,
+          body: `${MARKER}\nnewer existing`,
+          user: { login: "github-actions[bot]", type: "Bot" },
+        },
       ],
     },
     async (calls) => {
       await upsertImpactComment("ghs_test", 789, "replacement");
 
-      assert.equal(calls.update.length, 0);
-      assert.equal(calls.create.length, 1);
-      assert.ok(calls.create[0].body.includes("replacement"));
+      assert.equal(calls.update.length, 1);
+      assert.equal(calls.create.length, 0);
+      assert.equal(calls.update[0].comment_id, 88);
+      assert.ok(calls.update[0].body.includes("replacement"));
     },
   );
 });

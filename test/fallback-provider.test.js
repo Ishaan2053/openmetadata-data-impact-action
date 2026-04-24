@@ -162,3 +162,41 @@ test("FallbackLineageProvider merges metadata for duplicate node FQNs", async ()
   assert.deepEqual(result.nodes[0].tags, ["critical"]);
   assert.deepEqual(result.nodes[0].owners, ["finance-team"]);
 });
+
+test("FallbackLineageProvider sticks to fallback after non-recoverable primary provider warnings", async () => {
+  let primaryCalls = 0;
+  let fallbackCalls = 0;
+
+  const primary = {
+    name: "openmetadata-mcp",
+    async getDownstream(entity) {
+      primaryCalls += 1;
+      return {
+        sourceEntityFqn: entity.fqn,
+        nodes: [],
+        partial: true,
+        warnings: ["[MCP_REQUEST_FAILED] MCP unavailable"],
+      };
+    },
+  };
+
+  const fallback = {
+    name: "openmetadata-api",
+    async getDownstream(entity) {
+      fallbackCalls += 1;
+      return {
+        sourceEntityFqn: entity.fqn,
+        nodes: [],
+        partial: false,
+        warnings: [],
+      };
+    },
+  };
+
+  const provider = new FallbackLineageProvider(primary, fallback);
+  await provider.getDownstream(seedEntity(), 1);
+  await provider.getDownstream({ ...seedEntity(), fqn: "warehouse.analytics.customers", table: "customers" }, 1);
+
+  assert.equal(primaryCalls, 1);
+  assert.equal(fallbackCalls, 2);
+});

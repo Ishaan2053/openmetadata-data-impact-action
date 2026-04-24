@@ -10,6 +10,7 @@ test("detailed report includes truncation and confidence signals", () => {
     changedEntityCount: 4,
     lowConfidenceEntityCount: 2,
     impactedAssetCount: 1,
+    aiSummary: "One downstream dashboard needs validation.",
     warnings: ["sample warning"],
     impactedByType: {
       dashboard: [
@@ -40,4 +41,6 @@ test("detailed report includes truncation and confidence signals", () => {
   const markdown = renderDetailedImpactReport(summary, config);
   assert.ok(markdown.includes("| Truncated analysis | **yes** |"));
   assert.ok(markdown.includes("| Low-confidence entities | **2** |"));
+  assert.ok(markdown.includes("### Optional AI Summary"));
+  assert.ok(markdown.includes("### Suggestions"));
 });

@@ -184,3 +184,39 @@ test("computeImpactSummary can escalate medium risk to high via weighted governa
 
   assert.equal(summary.riskLevel, "high");
 });
+
+test("computeImpactSummary turns metadata into review and validation suggestions", () => {
+  const summary = computeImpactSummary(
+    seedInput({
+      lineageResults: [
+        {
+          sourceEntityFqn: "warehouse.analytics.orders",
+          nodes: [
+            {
+              id: "dash-1",
+              fqn: "bi.dashboard.revenue",
+              name: "Revenue Dashboard",
+              type: "dashboard",
+              owners: ["finance-team"],
+              domain: "finance",
+              tags: ["business_critical"],
+            },
+          ],
+          partial: false,
+          warnings: [],
+        },
+      ],
+    }),
+  );
+
+  assert.ok(
+    summary.suggestions.includes(
+      "Request review from OpenMetadata owners tied to critical impact: finance-team.",
+    ),
+  );
+  assert.ok(
+    summary.suggestions.includes(
+      "Validate downstream assets in affected domains: finance.",
+    ),
+  );
+});

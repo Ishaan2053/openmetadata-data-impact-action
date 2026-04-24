@@ -34,6 +34,9 @@ test("analysis status is degraded for transport failures", () => {
   const warnings = [formatWarning("NETWORK_ERROR", "Lineage request failed")];
   assert.equal(computeAnalysisStatus(warnings, false), "degraded");
 
+  const failureWarnings = [formatWarning("ACTION_FAILED", "Action failed hard")];
+  assert.equal(computeAnalysisStatus(failureWarnings, false), "degraded");
+
   const retryBudgetWarnings = [
     formatWarning("RETRY_BUDGET_EXHAUSTED", "Retry budget exhausted before recovery"),
   ];
