@@ -7,7 +7,7 @@ import { DiffReader } from "./github/diffReader";
 import { extractEntitiesFromFilesWithOptions } from "./parse";
 import { LineageProvider } from "./lineage/provider";
 import { OpenMetadataLineageProvider } from "./lineage/openmetadataProvider";
-import { OpenMetadataMcpLineageProvider } from "./lineage/openmetadataMcpProvider";
+import { McpLineageProvider } from "./lineage/mcpProvider";
 import { FallbackLineageProvider } from "./lineage/fallbackProvider";
 import { traverseDownstream } from "./lineage/traversal";
 import { computeImpactSummary } from "./impact/classifier";
@@ -294,16 +294,16 @@ function createProvider(config: ReturnType<typeof getConfig>): {
   }
 
   if (config.lineageProvider === "mcp") {
-    return { provider: new OpenMetadataMcpLineageProvider(config) };
+    return { provider: new McpLineageProvider(config) };
   }
 
   if (config.mcpEndpoint) {
-    const mcpProvider = new OpenMetadataMcpLineageProvider(config);
+    const mcpProvider = new McpLineageProvider(config);
     const apiProvider = new OpenMetadataLineageProvider(config);
     return {
       provider: new FallbackLineageProvider(mcpProvider, apiProvider),
       providerNotice:
-        "Auto lineage mode enabled with official OpenMetadata MCP primary and OpenMetadata API fallback.",
+        "Auto lineage mode enabled with MCP primary and OpenMetadata API fallback.",
     };
   }
 
