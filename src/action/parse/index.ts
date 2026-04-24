@@ -12,8 +12,16 @@ interface ParseOptions {
 }
 
 function isSchemaLike(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  const isYaml = normalized.endsWith(".yml") || normalized.endsWith(".yaml");
+  const inModelsDir = normalized.startsWith("models/") || normalized.includes("/models/");
+  const schemaNamed =
+    normalized.endsWith("schema.yml") ||
+    normalized.endsWith("schema.yaml") ||
+    normalized.endsWith(".schema.yml") ||
+    normalized.endsWith(".schema.yaml");
+
+  return isYaml && (schemaNamed || inModelsDir) && !normalized.endsWith("dbt_project.yml") && !normalized.endsWith("dbt_project.yaml");
 }
 
 function isDbtLike(path: string): boolean {

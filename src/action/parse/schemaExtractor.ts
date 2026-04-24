@@ -28,8 +28,16 @@ interface SchemaDocument {
 }
 
 function isSchemaFile(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith("schema.yml") || lower.endsWith("schema.yaml") || lower.endsWith(".schema.yml") || lower.endsWith(".schema.yaml");
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  const isYaml = normalized.endsWith(".yml") || normalized.endsWith(".yaml");
+  const inModelsDir = normalized.startsWith("models/") || normalized.includes("/models/");
+  const schemaNamed =
+    normalized.endsWith("schema.yml") ||
+    normalized.endsWith("schema.yaml") ||
+    normalized.endsWith(".schema.yml") ||
+    normalized.endsWith(".schema.yaml");
+
+  return isYaml && (schemaNamed || inModelsDir) && !normalized.endsWith("dbt_project.yml") && !normalized.endsWith("dbt_project.yaml");
 }
 
 function cleanPatch(patch?: string): string {
@@ -190,20 +198,22 @@ export function extractSchemaEntities(file: ChangedFile): SchemaExtractionResult
   const warnings: string[] = [];
 
   try {
-    const document = yaml.load(text) as SchemaDocument | undefined;
+    const documents = yaml.loadAll(text) as SchemaDocument[];
 
-    for (const model of document?.models ?? []) {
-      pushTableAndColumns(entities, file.path, model.name, undefined, model.columns);
-    }
-
-    for (const source of document?.sources ?? []) {
-      for (const table of source.tables ?? []) {
-        pushTableAndColumns(entities, file.path, table.name, source.name, table.columns);
+    for (const document of documents) {
+      for (const model of document?.models ?? []) {
+        pushTableAndColumns(entities, file.path, model.name, undefined, model.columns);
       }
-    }
 
-    for (const table of document?.tables ?? []) {
-      pushTableAndColumns(entities, file.path, table.name, undefined, table.columns);
+      for (const source of document?.sources ?? []) {
+        for (const table of source.tables ?? []) {
+          pushTableAndColumns(entities, file.path, table.name, source.name, table.columns);
+        }
+      }
+
+      for (const table of document?.tables ?? []) {
+        pushTableAndColumns(entities, file.path, table.name, undefined, table.columns);
+      }
     }
   } catch {
     warnings.push(
