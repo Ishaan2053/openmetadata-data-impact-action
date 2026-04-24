@@ -118335,7 +118335,7 @@ async function upsertImpactComment(githubToken, prNumber, body) {
         if (authenticatedLogin) {
             return comment.user?.login === authenticatedLogin;
         }
-        return comment.user?.type === "Bot";
+        return false;
     });
     if (existing) {
         await withRetry(() => octokit.rest.issues.updateComment({
@@ -119241,10 +119241,15 @@ class DiffReader {
             const patch = file.patch;
             const patchChangeCount = patch ? estimatePatchChangeCount(patch) : 0;
             const reportedChanges = file.changes ?? 0;
-            const shouldHydrate = !patch ||
-                patch.length < 300 ||
-                (reportedChanges > 0 && patchChangeCount > 0 && patchChangeCount < reportedChanges);
+            const patchAppearsIncomplete = Boolean(patch) &&
+                reportedChanges > 0 &&
+                patchChangeCount > 0 &&
+                patchChangeCount < reportedChanges;
+            const shouldHydrate = !patch;
             if (!shouldHydrate) {
+                if (patchAppearsIncomplete) {
+                    (0, logging_1.logDebug)(`Skipping full-file hydration for ${file.path} because parsing is diff-first even when GitHub patch data appears incomplete.`);
+                }
                 hydrated.push(file);
                 continue;
             }
@@ -120102,12 +120107,13 @@ if (__nccwpck_require__.c[__nccwpck_require__.s] === module) {
 /***/ }),
 
 /***/ 71632:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FallbackLineageProvider = void 0;
+const warnings_1 = __nccwpck_require__(11456);
 function mergeNodes(primary, fallback) {
     const merged = new Map();
     for (const node of [...primary, ...fallback]) {
@@ -120156,7 +120162,7 @@ class FallbackLineageProvider {
             warnings: [...new Set([
                     ...primaryResult.warnings,
                     ...fallbackResult.warnings,
-                    `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`,
+                    (0, warnings_1.formatWarning)("AUTO_FALLBACK_USED", `Auto fallback used ${this.fallback.name} for ${entity.fqn}.`),
                 ])],
         };
     }
@@ -120423,7 +120429,11 @@ function normalizeEntityFqn(entity) {
     return entity.fqn;
 }
 function createMcpWarning(status, method) {
-    const warningCode = status === 401 || status === 403 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
+    const warningCode = status === 401 || status === 403
+        ? "AUTH_ERROR"
+        : status === 429
+            ? "RATE_LIMITED"
+            : "MCP_REQUEST_FAILED";
     return (0, warnings_1.formatWarning)(warningCode, `OpenMetadata MCP request '${method}' failed with status ${status}.`);
 }
 class OpenMetadataMcpLineageProvider {
@@ -120435,6 +120445,10 @@ class OpenMetadataMcpLineageProvider {
     cache = new Map();
     observability = {
         requests: 0,
+        retryAttempts: 0,
+        totalRetryWaitMs: 0,
+        cappedRetryWaits: 0,
+        retryBudgetExhaustions: 0,
         initializeCalls: 0,
         toolListCalls: 0,
         toolCalls: 0,
@@ -120798,31 +120812,27 @@ class OpenMetadataMcpLineageProvider {
                 warning: (0, warnings_1.formatWarning)("MCP_NOT_CONFIGURED", "MCP endpoint is not configured for OpenMetadata MCP integration."),
             };
         }
-        this.observability.requests += 1;
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-        try {
-            const response = await fetch(this.config.mcpEndpoint, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${this.config.authToken}`,
-                },
-                body: JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: this.requestId++,
-                    method,
-                    ...(params ? { params } : {}),
-                }),
-                signal: controller.signal,
-            });
-            if (!response.ok) {
+        const outcome = await this.requestJsonRpc(method, params);
+        if (!outcome.ok) {
+            if (outcome.retryBudgetExhausted) {
                 return {
                     ok: false,
-                    warning: createMcpWarning(response.status, method),
+                    warning: (0, warnings_1.formatWarning)("RETRY_BUDGET_EXHAUSTED", `Retry wait budget exhausted before OpenMetadata MCP '${method}' could recover.`),
                 };
             }
-            const payload = (await response.json());
+            if (outcome.transportError) {
+                return {
+                    ok: false,
+                    warning: (0, warnings_1.formatWarning)("MCP_REQUEST_FAILED", `OpenMetadata MCP request '${method}' failed: ${outcome.transportError}.`),
+                };
+            }
+            return {
+                ok: false,
+                warning: createMcpWarning(outcome.status, method),
+            };
+        }
+        try {
+            const payload = (await outcome.response.json());
             if (payload.error) {
                 const warningCode = payload.error.code === -32002 ? "AUTH_ERROR" : "MCP_REQUEST_FAILED";
                 return {
@@ -120844,9 +120854,106 @@ class OpenMetadataMcpLineageProvider {
                 warning: (0, warnings_1.formatWarning)("MCP_REQUEST_FAILED", `OpenMetadata MCP request '${method}' failed: ${String(error)}.`),
             };
         }
-        finally {
-            clearTimeout(timer);
+    }
+    async requestJsonRpc(method, params) {
+        let attempt = 0;
+        let backoff = 300;
+        let remainingRetryWaitBudgetMs = this.config.maxTotalRetryWaitMs;
+        const body = JSON.stringify({
+            jsonrpc: "2.0",
+            id: this.requestId++,
+            method,
+            ...(params ? { params } : {}),
+        });
+        const waitForRetry = async (desiredWaitMs) => {
+            const cappedWaitMs = Math.min(desiredWaitMs, this.config.maxRetryWaitMs);
+            if (cappedWaitMs < desiredWaitMs) {
+                this.observability.cappedRetryWaits += 1;
+            }
+            if (cappedWaitMs === 0) {
+                this.observability.retryAttempts += 1;
+                return true;
+            }
+            if (remainingRetryWaitBudgetMs <= 0) {
+                this.observability.retryBudgetExhaustions += 1;
+                return false;
+            }
+            const waitMs = Math.min(cappedWaitMs, remainingRetryWaitBudgetMs);
+            this.observability.retryAttempts += 1;
+            this.observability.totalRetryWaitMs += waitMs;
+            remainingRetryWaitBudgetMs -= waitMs;
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            return true;
+        };
+        while (attempt <= this.config.maxRetries) {
+            attempt += 1;
+            this.observability.requests += 1;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+            try {
+                const response = await fetch(this.config.mcpEndpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${this.config.authToken}`,
+                    },
+                    body,
+                    signal: controller.signal,
+                });
+                const retryAfterHeader = response.headers?.get?.("retry-after") ?? null;
+                const retryAfterSeconds = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : Number.NaN;
+                const retryAfterMs = !Number.isNaN(retryAfterSeconds) && retryAfterSeconds >= 0
+                    ? retryAfterSeconds * 1000
+                    : (() => {
+                        const parsedDate = retryAfterHeader ? Date.parse(retryAfterHeader) : Number.NaN;
+                        return Number.isNaN(parsedDate) ? undefined : Math.max(0, parsedDate - Date.now());
+                    })();
+                const shouldRetry = (response.status === 429 || response.status >= 500) && attempt <= this.config.maxRetries;
+                if (shouldRetry) {
+                    const canRetry = await waitForRetry((retryAfterMs ?? backoff) + Math.floor(Math.random() * 250));
+                    if (!canRetry) {
+                        return {
+                            ok: false,
+                            status: 598,
+                            retryBudgetExhausted: true,
+                        };
+                    }
+                    backoff *= 2;
+                    continue;
+                }
+                return {
+                    ok: response.ok,
+                    status: response.status,
+                    response,
+                };
+            }
+            catch (error) {
+                if (attempt > this.config.maxRetries) {
+                    return {
+                        ok: false,
+                        status: 599,
+                        transportError: String(error),
+                    };
+                }
+                const canRetry = await waitForRetry(backoff + Math.floor(Math.random() * 250));
+                if (!canRetry) {
+                    return {
+                        ok: false,
+                        status: 598,
+                        retryBudgetExhausted: true,
+                    };
+                }
+                backoff *= 2;
+            }
+            finally {
+                clearTimeout(timer);
+            }
         }
+        return {
+            ok: false,
+            status: 599,
+            transportError: "OpenMetadata MCP request exhausted retries.",
+        };
     }
 }
 exports.OpenMetadataMcpLineageProvider = OpenMetadataMcpLineageProvider;
@@ -121526,13 +121633,20 @@ function readablePatch(patch) {
     })
         .join("\n");
 }
+function getSearchText(file) {
+    const patchText = readablePatch(file.patch).trim();
+    if (patchText.length > 0) {
+        return patchText;
+    }
+    return (file.content ?? "").trim();
+}
 function extractDbtEntities(file) {
     const lowerPath = file.path.toLowerCase();
     const isDbtLike = lowerPath.endsWith(".sql") || lowerPath.endsWith(".sql.jinja") || lowerPath.endsWith(".jinja");
     if (!isDbtLike && !lowerPath.includes("dbt_project.")) {
         return [];
     }
-    const text = `${readablePatch(file.patch)}\n${file.content ?? ""}`;
+    const text = getSearchText(file);
     const entities = [];
     const unique = new Set();
     const modelEntity = buildModelEntity(file.path);
@@ -121811,6 +121925,13 @@ function cleanPatch(patch) {
     })
         .join("\n");
 }
+function getParseText(file) {
+    const patchText = cleanPatch(file.patch).trim();
+    if (patchText.length > 0) {
+        return patchText;
+    }
+    return (file.content ?? "").trim();
+}
 function pushTableAndColumns(entities, sourceFile, tableName, schema, columns) {
     if (!tableName) {
         return;
@@ -121838,11 +121959,74 @@ function pushTableAndColumns(entities, sourceFile, tableName, schema, columns) {
         });
     }
 }
+function extractFallbackSchemaEntities(text, sourceFile) {
+    const entities = [];
+    let activeSection;
+    let currentSourceName;
+    let currentSourceIndent;
+    const pushEntity = (table, schema) => {
+        entities.push({
+            sourceKind: "schema",
+            sourceFile,
+            rawReference: table,
+            table,
+            schema,
+            confidence: "low",
+        });
+    };
+    for (const rawLine of text.split(/\r?\n/)) {
+        const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
+        const trimmed = rawLine.trim();
+        if (!trimmed) {
+            continue;
+        }
+        if (currentSourceIndent !== undefined && indent <= currentSourceIndent && !trimmed.startsWith("- name:")) {
+            currentSourceName = undefined;
+            currentSourceIndent = undefined;
+        }
+        if (/^models:\s*$/i.test(trimmed)) {
+            activeSection = "models";
+            continue;
+        }
+        if (/^sources:\s*$/i.test(trimmed)) {
+            activeSection = "sources";
+            currentSourceName = undefined;
+            currentSourceIndent = indent;
+            continue;
+        }
+        if (/^tables:\s*$/i.test(trimmed)) {
+            activeSection = "tables";
+            continue;
+        }
+        if (/^columns:\s*$/i.test(trimmed)) {
+            activeSection = "columns";
+            continue;
+        }
+        const nameMatch = trimmed.match(/^-\s*name:\s*([a-zA-Z0-9_.-]+)\s*$/);
+        if (!nameMatch?.[1]) {
+            continue;
+        }
+        const name = nameMatch[1];
+        if (activeSection === "models") {
+            pushEntity(name);
+            continue;
+        }
+        if (activeSection === "sources") {
+            currentSourceName = name;
+            currentSourceIndent = indent;
+            continue;
+        }
+        if (activeSection === "tables") {
+            pushEntity(name, currentSourceName);
+        }
+    }
+    return entities;
+}
 function extractSchemaEntities(file) {
     if (!isSchemaFile(file.path)) {
         return { entities: [], warnings: [] };
     }
-    const text = (file.content && file.content.trim().length > 0 ? file.content : cleanPatch(file.patch)).trim();
+    const text = getParseText(file);
     if (!text) {
         return { entities: [], warnings: [] };
     }
@@ -121864,21 +122048,7 @@ function extractSchemaEntities(file) {
     }
     catch {
         warnings.push((0, warnings_1.formatWarning)("PARSE_FAILED", `Failed to fully parse schema file ${file.path}; using fallback name-based extraction.`));
-        // Fallback heuristic for partial patch fragments.
-        const tableMatches = text.matchAll(/\bname:\s*([a-zA-Z0-9_\-.]+)/g);
-        for (const match of tableMatches) {
-            const name = match[1];
-            if (!name) {
-                continue;
-            }
-            entities.push({
-                sourceKind: "schema",
-                sourceFile: file.path,
-                rawReference: name,
-                table: name,
-                confidence: "low",
-            });
-        }
+        entities.push(...extractFallbackSchemaEntities(text, file.path));
     }
     const dedupe = new Map();
     for (const entity of entities) {
@@ -121929,6 +122099,13 @@ function extractReadablePatch(patch) {
     });
     return lines.join("\n");
 }
+function getSearchText(file) {
+    const patchText = file.patch ? extractReadablePatch(file.patch).trim() : "";
+    if (patchText.length > 0) {
+        return patchText;
+    }
+    return (file.content ?? "").trim();
+}
 function splitTableParts(tableRef) {
     const cleaned = cleanupIdentifier(tableRef);
     const parts = cleaned.split(".").filter(Boolean);
@@ -121953,9 +122130,7 @@ function extractSqlEntities(file, options) {
     if (!isSqlLikePath(file.path)) {
         return [];
     }
-    const searchText = [file.patch ? extractReadablePatch(file.patch) : "", file.content ?? ""]
-        .join("\n")
-        .trim();
+    const searchText = getSearchText(file);
     if (!searchText) {
         return [];
     }
@@ -122060,6 +122235,7 @@ const KNOWN_WARNING_CODES = new Set([
     "METADATA_MISSING",
     "LINEAGE_EMPTY_PAYLOAD",
     "LINEAGE_REQUEST_FAILED",
+    "AUTO_FALLBACK_USED",
     "AUTH_ERROR",
     "RATE_LIMITED",
     "NETWORK_ERROR",
@@ -122090,6 +122266,7 @@ const DEGRADED_WARNING_CODES = new Set([
 const PARTIAL_WARNING_CODES = new Set([
     "METADATA_MISSING",
     "LINEAGE_EMPTY_PAYLOAD",
+    "AUTO_FALLBACK_USED",
     "PARSE_FAILED",
     "AI_SUMMARY_FAILED",
     "AI_SUMMARY_FALLBACK",
