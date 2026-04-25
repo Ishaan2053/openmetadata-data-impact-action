@@ -53,11 +53,16 @@ jobs:
         id: release_meta
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-.+)?$ ]]; then
             echo "is_semver_tag=true" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease_tag=false" >> "$GITHUB_OUTPUT"
             echo "major_tag=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            if [[ -n "${BASH_REMATCH[4]}" ]]; then
+              echo "is_prerelease_tag=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "is_semver_tag=false" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease_tag=false" >> "$GITHUB_OUTPUT"
             echo "major_tag=" >> "$GITHUB_OUTPUT"
           fi
 
@@ -65,6 +70,11 @@ jobs:
         if: steps.release_meta.outputs.is_semver_tag == 'true'
         shell: bash
         run: |
+          if [[ "${{ steps.release_meta.outputs.is_prerelease_tag }}" == "true" ]]; then
+            echo "Skipping moving major tag update for prerelease ${GITHUB_REF_NAME}."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -f "${{ steps.release_meta.outputs.major_tag }}" "${GITHUB_REF_NAME}"
@@ -79,7 +89,11 @@ jobs:
           if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
             echo "Release ${GITHUB_REF_NAME} already exists."
           else
-            gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --latest --title "${GITHUB_REF_NAME}"
+            if [[ "${{ steps.release_meta.outputs.is_prerelease_tag }}" == "true" ]]; then
+              gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --prerelease --title "${GITHUB_REF_NAME}"
+            else
+              gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --latest --title "${GITHUB_REF_NAME}"
+            fi
           fi
 
       - name: Attach bundle asset to release
