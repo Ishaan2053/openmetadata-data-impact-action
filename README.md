@@ -4,7 +4,6 @@ Note: This README is production-oriented. For the hackathon-focused overview, ju
 
 [![CI](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/codeql.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/codeql.yml)
-[![Integration: OpenMetadata](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/integration-openmetadata.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/integration-openmetadata.yml)
 [![Secret Scan](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/secret-scan.yml)
 [![Release](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml)
 [![Node](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)

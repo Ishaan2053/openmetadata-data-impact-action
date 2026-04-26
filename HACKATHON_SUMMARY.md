@@ -1,6 +1,9 @@
 # OpenMetadata Data Impact Action (Hackathon Overview)
 We know going through tons of submissions is a real cognitive drain, so We put together a no-fluff readme for you guys so it's easy to understand what all we've done in less than 2 minutes (our production [README.md](https://github.com/Ishaan2053/openmetadata-data-impact-action/blob/main/README.md) is too much lol).
 
+Project submission video [here](https://youtu.be/iVBs-KyPHCE).
+Demo repository with the action in use [here](https://github.com/ishaan2053/om-impact-demo)
+
 ---
 
 ### 1) What problem are we solving?
@@ -28,6 +31,19 @@ This reduces:
 - Produces both human-readable and machine-readable outputs
 - Supports production controls (retry handling, guardrails, strict governance mode)
 - Integrates directly with OpenMetadata as the source of truth for lineage
+
+### 5) Features (at a glance)
+- PR diff analysis for SQL, dbt model SQL, and dbt YAML/property changes
+- Entity extraction with optional strict SQL mode + low-confidence tracking
+- OpenMetadata lineage via API, MCP, or auto mode (with MCP tools support)
+- Risk classification (low/medium/high) using blast radius, warnings, critical tags, governance context, and configurable thresholds/weights
+- Operating presets: `fast`, `balanced`, `strict-governance`
+- Guardrails: max tracked files, entities, downstream assets, and truncation-safe reporting
+- Reliability controls: retries with jitter, `Retry-After`, per-attempt wait caps, and total retry budget caps
+- Security controls: endpoint allowlist, localhost-only insecure mode, markdown/comment sanitization, and safe link handling
+- Outputs: idempotent PR comment upsert, full GitHub job summary, compact `impact-json`, optional `impact-json-file`, and workflow outputs (`analysis-status`, `risk-level`, counts, warning taxonomy, retry observability)
+- Optional AI-generated summary layer
+- OpenMetadata lineage compatibility coverage across multiple payload shapes (1.5.x, 1.6.x, 1.7+)
 
 ---
 
