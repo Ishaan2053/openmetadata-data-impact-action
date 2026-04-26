@@ -33,6 +33,7 @@ The guide walks through a **local-first testing approach** where:
 - OpenMetadata runs locally
 - A self-hosted runner executes workflows
 - A separate repository simulates real PRs
+- The manual E2E harness creates real PRs and validates real workflow outputs end to end
 
 ---
 
@@ -131,6 +132,46 @@ Once you're done, you should be able to access the following: -
 * OpenMetadata UI: [http://localhost:8585](http://localhost:8585)
 * Airflow UI: [http://localhost:8080](http://localhost:8080)
 
+### MCP Validation
+
+If you want to run the real MCP scenario, validate the OpenMetadata MCP endpoint first.
+
+Official MCP docs: [https://docs.open-metadata.org/v1.12.x/how-to-guides/mcp/connect](https://docs.open-metadata.org/v1.12.x/how-to-guides/mcp/connect)
+
+```powershell
+$token = "PASTE_OPENMETADATA_TOKEN"
+$headers = @{
+  Authorization = "Bearer $token"
+  "Content-Type" = "application/json"
+}
+
+$body = @{
+  jsonrpc = "2.0"
+  id = 1
+  method = "initialize"
+  params = @{
+    protocolVersion = "2024-11-05"
+    capabilities = @{
+      tools = @{}
+      prompts = @{}
+      resources = @{
+        subscribe = $false
+        listChanged = $false
+      }
+    }
+    clientInfo = @{
+      name = "manual-e2e-check"
+      version = "1.0.0"
+    }
+  }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8585/mcp" `
+  -Headers $headers `
+  -Body $body
+```
+
 ---
 
 ## 3. Create and Validate API Token
@@ -222,6 +263,12 @@ New-Item -ItemType Directory -Force -Path models | Out-Null
 gh secret set OPENMETADATA_TOKEN -b "PASTE_OPENMETADATA_TOKEN"
 ```
 
+If you want to run the real AI-summary scenario, also add a real provider key:
+
+```powershell
+gh secret set AI_SUMMARY_API_KEY -b "PASTE_REAL_AI_PROVIDER_KEY"
+```
+
 ---
 
 ## 7. Configure Workflow
@@ -254,17 +301,9 @@ jobs:
       - name: Checkout consumer repo
         uses: actions/checkout@v4
 
-      - name: Checkout private action repo
-        uses: actions/checkout@v4
-        with:
-          repository: Ishaan2053/openmetadata-github-action
-          ref: main
-          token: ${{ secrets.ACTION_REPO_PAT }}
-          path: .github/actions/openmetadata-impact
-
       - name: Run OpenMetadata impact analysis
         id: impact
-        uses: ./.github/actions/openmetadata-impact
+        uses: Ishaan2053/openmetadata-data-impact-action@main
         with:
           openmetadata-endpoint: http://localhost:8585
           allow-insecure-local-endpoints: "true"
@@ -274,8 +313,6 @@ jobs:
           lineage-provider: api
           max-lineage-depth: "3"
 ```
-
-> If using private repositories, add `ACTION_REPO_PAT` with read access.
 
 ---
 
@@ -289,6 +326,17 @@ SELECT
   customer_id,
   total
 FROM sample_data.ecommerce_db.shopify.fact_orders //sample table 
+WHERE total > 100;
+```
+
+For this action, prefer the action-compatible 3-part table reference used by the runtime parser:
+
+```sql
+SELECT
+  order_id,
+  customer_id,
+  total
+FROM ecommerce_db.shopify.fact_orders
 WHERE total > 100;
 ```
 

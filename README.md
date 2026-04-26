@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/codeql.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/codeql.yml)
+[![Integration: OpenMetadata](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/integration-openmetadata.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/integration-openmetadata.yml)
 [![Secret Scan](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/secret-scan.yml)
-[![Release Bundle](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml)
+[![Release](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/release.yml)
 [![Node](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./package.json)
 
@@ -135,16 +136,16 @@ The action exposes the following outputs:
 | Output | Description |
 |---|---|
 | `risk-level` | Computed risk level (`high`, `medium`, `low`) |
-| `impacted-asset-count` | Number of impacted downstream assets |
-| `warning-count` | Number of warnings generated |
-| `changed-entity-count` | Number of extracted changed entities |
-| `low-confidence-entity-count` | Number of low-confidence extracted entities |
-| `truncated-analysis` | `true` if guardrails truncated analysis |
-| `analysis-status` | Overall run status (`success`, `partial`, `degraded`, `skipped`, `failed`) |
-| `warning-code-counts` | JSON object mapping warning taxonomy codes to counts |
+| `impacted-asset-count` | Total impacted downstream assets |
+| `warning-count` | Number of warnings generated during analysis |
+| `changed-entity-count` | Number of changed entities extracted from PR files |
+| `low-confidence-entity-count` | Number of low confidence extracted entities |
+| `truncated-analysis` | Whether analysis was truncated by guardrails (`true` or `false`) |
+| `analysis-status` | Overall analysis state (`success`, `partial`, `degraded`, `skipped`, `failed`) |
+| `warning-code-counts` | JSON object mapping warning taxonomy code to occurrence count |
 | `retry-observability` | JSON object with retry counters (attempts, capped waits, budget exhaustions) |
-| `impact-json` | Compact machine-readable JSON payload for automation |
-| `impact-json-file` | Path to full JSON payload when `impact-json-file` input is configured |
+| `impact-json` | Compact structured impact JSON for workflow automation |
+| `impact-json-file` | Resolved path to full structured JSON file when `impact-json-file` input is set |
 
 ### Output usage example
 
@@ -170,45 +171,45 @@ The action exposes the following outputs:
 
 | Input | Required | Default | Description |
 |---|---:|---|---|
-| `openmetadata-endpoint` | yes | - | OpenMetadata API base URL |
+| `openmetadata-endpoint` | yes | - | OpenMetadata API base URL (for example, `https://metadata.example.com`) |
 | `auth-token` | yes | - | OpenMetadata bearer token |
-| `github-token` | no | `${{ github.token }}` / `GITHUB_TOKEN` | GitHub token for diff reading + PR comments |
-| `file-patterns` | no | See defaults in `action.yml` | Comma/newline glob patterns for tracked files |
+| `github-token` | no | `${{ github.token }}` / `GITHUB_TOKEN` | GitHub token used to read PR diff and publish comments |
+| `file-patterns` | no | `**/*.sql`, `**/models/**/*.yml`, `**/models/**/*.yaml`, `**/schema.yml`, `**/schema.yaml`, `**/dbt_project.yml`, `**/dbt_project.yaml` | Comma or newline separated glob patterns for tracked files |
 | `operating-mode` | no | `balanced` | Preset execution mode (`fast`, `balanced`, `strict-governance`) |
-| `lineage-provider` | no | `auto` | `api`, `mcp`, or `auto` |
-| `mcp-endpoint` | no | `{openmetadata-endpoint}/mcp` | OpenMetadata MCP JSON-RPC endpoint |
-| `max-lineage-depth` | no | `3` | Maximum downstream traversal depth (1-3; OpenMetadata API limit) |
-| `max-concurrency` | no | `4` | Max concurrent lineage lookups |
-| `max-tracked-files` | no | `200` | Max tracked files analyzed per PR |
-| `max-entities` | no | `500` | Max extracted entities analyzed |
-| `max-downstream-assets` | no | `2000` | Max downstream assets before truncation |
-| `request-timeout-ms` | no | `15000` | HTTP timeout in ms |
-| `max-retries` | no | `3` | Max retries for transient API errors (`0` disables retries) |
-| `max-retry-wait-ms` | no | `15000` | Max wait per retry attempt in ms |
-| `max-total-retry-wait-ms` | no | `60000` | Total retry wait budget per lineage request in ms |
-| `fail-on-missing-metadata` | no | `false` | Fail run if referenced entities are missing in metadata |
+| `lineage-provider` | no | `auto` | Lineage backend (`api`, `mcp`, or `auto`) |
+| `mcp-endpoint` | no | - | OpenMetadata MCP JSON-RPC endpoint (defaults to `{openmetadata-endpoint}/mcp`) |
+| `max-lineage-depth` | no | `3` | Maximum downstream traversal depth (1-3, OpenMetadata API limit) |
+| `max-concurrency` | no | `4` | Maximum concurrent lineage lookups |
+| `max-tracked-files` | no | `200` | Maximum tracked files analyzed per PR |
+| `max-entities` | no | `500` | Maximum extracted entities analyzed per PR |
+| `max-downstream-assets` | no | `2000` | Maximum downstream assets traversed before truncation |
+| `request-timeout-ms` | no | `15000` | HTTP request timeout in milliseconds |
+| `max-retries` | no | `3` | Maximum retries for transient API failures (`0` disables retries) |
+| `max-retry-wait-ms` | no | `15000` | Maximum wait duration per retry attempt in milliseconds |
+| `max-total-retry-wait-ms` | no | `60000` | Total retry wait budget across a single lineage request in milliseconds |
+| `fail-on-missing-metadata` | no | `false` | Fail action if referenced entities cannot be resolved in metadata |
 | `ai-summary-enabled` | no | `false` | Enable optional AI summary layer |
 | `ai-summary-provider` | no | - | LLM provider for AI summary (for example, `openai`, `anthropic`, `google`, `openrouter`) |
-| `ai-summary-model` | no | - | LLM model name for AI summary |
-| `ai-summary-api-key` | no | - | API key for selected AI summary provider (recommended from GitHub Secrets) |
-| `impact-json-file` | no | - | Optional path to write full JSON payload (for artifact upload) |
-| `strict-sql-parse` | no | `false` | Stricter SQL parsing mode |
-| `critical-asset-tags` | no | `tier1,critical,business_critical` | Critical tags that increase risk |
-| `risk-high-dashboard-count` | no | `5` | High-risk threshold for impacted dashboards |
-| `risk-high-pipeline-count` | no | `4` | High-risk threshold for impacted pipelines |
-| `risk-high-report-count` | no | `8` | High-risk threshold for impacted reports |
-| `risk-high-total-assets` | no | `20` | High-risk threshold for total impacted assets |
-| `risk-high-warning-count` | no | `3` | Warning count threshold that can escalate to high risk |
-| `risk-high-warning-min-assets` | no | `8` | Minimum impacted assets when warning threshold is met |
-| `risk-high-low-confidence-count` | no | `10` | High-risk threshold for low-confidence extracted entities |
-| `risk-weight-governance` | no | `0` | Optional governance signal weight in risk overlay |
-| `risk-weight-usage` | no | `0` | Optional usage signal weight in risk overlay |
-| `risk-weight-data-quality` | no | `0` | Optional data-quality signal weight in risk overlay |
-| `risk-weight-medium-threshold` | no | `6` | Weighted score threshold to lift low risk to medium |
-| `risk-weight-high-threshold` | no | `12` | Weighted score threshold to escalate risk to high |
-| `allowed-endpoint-hosts` | no | - | Optional endpoint hostname allowlist |
-| `allow-insecure-local-endpoints` | no | `false` | Allow `http://` for localhost/loopback only |
-| `max-comment-assets` | no | `20` | Max impacted assets shown per type in PR comment |
+| `ai-summary-model` | no | - | LLM model name for AI summary (for example, `gpt-4-mini`, `claude-3-5-sonnet-latest`) |
+| `ai-summary-api-key` | no | - | API key for selected AI summary LLM provider (store in GitHub Secrets) |
+| `impact-json-file` | no | - | Optional path to write full structured impact JSON (for artifact upload) |
+| `strict-sql-parse` | no | `false` | Use stricter SQL parsing mode for higher precision |
+| `critical-asset-tags` | no | `tier1`, `critical`, `business_critical` | Comma or newline separated critical asset tags for risk scoring |
+| `risk-high-dashboard-count` | no | `5` | Dashboard impact count threshold for high risk |
+| `risk-high-pipeline-count` | no | `4` | Pipeline impact count threshold for high risk |
+| `risk-high-report-count` | no | `8` | Report impact count threshold for high risk |
+| `risk-high-total-assets` | no | `20` | Total impacted assets threshold for high risk |
+| `risk-high-warning-count` | no | `3` | Warning count threshold that can trigger high risk with sufficient impacted assets |
+| `risk-high-warning-min-assets` | no | `8` | Minimum impacted assets required when warning threshold is met for high risk |
+| `risk-high-low-confidence-count` | no | `10` | Low-confidence changed entity threshold for high risk |
+| `risk-weight-governance` | no | `0` | Optional governance weight used in weighted risk scoring overlay |
+| `risk-weight-usage` | no | `0` | Optional usage weight used in weighted risk scoring overlay |
+| `risk-weight-data-quality` | no | `0` | Optional data-quality weight used in weighted risk scoring overlay |
+| `risk-weight-medium-threshold` | no | `6` | Weighted risk score threshold that lifts low risk to medium |
+| `risk-weight-high-threshold` | no | `12` | Weighted risk score threshold that escalates risk to high |
+| `allowed-endpoint-hosts` | no | - | Optional comma or newline separated endpoint hostname allowlist |
+| `allow-insecure-local-endpoints` | no | `false` | Allow http endpoints for localhost or loopback only |
+| `max-comment-assets` | no | `20` | Maximum impacted assets shown per type in PR comment |
 
 ## Environment variables
 
@@ -301,4 +302,4 @@ For full local environment setup (OpenMetadata services, self-hosted runner, pri
 
 - This action is optimized for pull request workflows.
 - `lineage-provider: auto` uses official OpenMetadata MCP first and falls back to OpenMetadata API, sticking to API fallback for the rest of the run when MCP is clearly unavailable.
-- When `mcp-endpoint` is omitted, the action automatically uses `{openmetadata-endpoint}/mcp`.
+- This Action uses [multi-llm-ts](https://nbonamy.github.io/multi-llm-ts/) for unified LLM provider integration in the optional AI summary layer. See all available providers [here](https://nbonamy.github.io/multi-llm-ts/guide/providers.html).
