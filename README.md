@@ -1,3 +1,5 @@
+Note: This README is production-oriented. For the hackathon-focused overview, judges please see [HACKATHON_SUMMARY.md](./HACKATHON_SUMMARY.md)
+
 # OpenMetadata Data Impact Analysis Action
 
 [![CI](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishaan2053/openmetadata-data-impact-action/actions/workflows/ci.yml)
@@ -8,7 +10,6 @@
 [![Node](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./package.json)
 
-**Tags:** `github-action` `openmetadata` `data-lineage` `impact-analysis` `sql` `dbt` `schema` `pull-request` `data-governance` `nodejs` `typescript`
 
 Analyze SQL, dbt model, and dbt YAML property changes in pull requests, traverse downstream lineage from OpenMetadata, and publish a production-ready impact report to the PR and GitHub Actions job summary.
 
@@ -303,3 +304,8 @@ For full local environment setup (OpenMetadata services, self-hosted runner, pri
 - This action is optimized for pull request workflows.
 - `lineage-provider: auto` uses official OpenMetadata MCP first and falls back to OpenMetadata API, sticking to API fallback for the rest of the run when MCP is clearly unavailable.
 - This Action uses [multi-llm-ts](https://nbonamy.github.io/multi-llm-ts/) for unified LLM provider integration in the optional AI summary layer. See all available providers [here](https://nbonamy.github.io/multi-llm-ts/guide/providers.html).
+
+
+---
+
+Built during Back to the Metadata Hackathon with 💪🏼. For the hackathon-focused overview, judges please see [HACKATHON_SUMMARY.md](./HACKATHON_SUMMARY.md)
