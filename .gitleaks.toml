@@ -1,0 +1,10 @@
+title = "OpenMetadata Data Impact Action gitleaks config"
+
+[allowlist]
+description = "Allow known non-secret example token in generated bundled dependency docs"
+paths = [
+  '''bundle/index\.js'''
+]
+regexes = [
+  '''const apiToken = "abc123xyz456";'''
+]
